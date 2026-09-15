@@ -207,7 +207,7 @@ export async function shareHappyCard(item: NewsItem): Promise<void> {
       });
       return;
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') return;
+      if ((error as { name?: string } | null)?.name === 'AbortError') return;
       /* share failed — fall through */
     }
   }

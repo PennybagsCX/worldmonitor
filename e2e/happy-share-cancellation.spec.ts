@@ -23,13 +23,15 @@ test('Happy Share cancellation stops fallback while genuine errors retain it', a
   await expect(page.getByRole('button', { name: 'Share this story' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('happy-share-controlled-story.png') });
 
-  for (const scenario of ['cancel', 'cancel-no-clipboard', 'native-success', 'clipboard', 'download'] as const) {
+  for (const scenario of ['cancel', 'cancel-no-clipboard', 'cancel-unbranded', 'native-success', 'clipboard', 'download', 'null-error'] as const) {
     const result = await page.evaluate(async (mode) => {
       let shares = 0; let writes = 0; let downloads = 0;
       Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true });
       Object.defineProperty(navigator, 'share', { configurable: true, value: async () => {
         shares++;
         if (mode === 'native-success') return;
+        if (mode === 'cancel-unbranded') throw { name: 'AbortError' };
+        if (mode === 'null-error') throw null;
         throw new DOMException('Controlled native share result', mode.startsWith('cancel') ? 'AbortError' : 'NotAllowedError');
       } });
       Object.defineProperty(navigator, 'clipboard', { configurable: true, value: mode === 'cancel-no-clipboard' ? undefined : {
@@ -50,7 +52,7 @@ test('Happy Share cancellation stops fallback while genuine errors retain it', a
         HTMLAnchorElement.prototype.click = originalClick;
       }
     }, scenario);
-    expect(result, scenario).toEqual({ shares: 1, writes: scenario === 'clipboard' || scenario === 'download' ? 1 : 0,
+    expect(result, scenario).toEqual({ shares: 1, writes: scenario === 'clipboard' || scenario === 'download' || scenario === 'null-error' ? 1 : 0,
       downloads: scenario === 'download' ? 1 : 0 });
   }
 
