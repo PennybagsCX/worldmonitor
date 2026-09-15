@@ -15,7 +15,7 @@ it('uses identical normalized query bounds for requests in the same server cache
   await listMilitaryBases(ctx, req);
   await listMilitaryBases(ctx, { ...req, swLat: 10.2, swLon: 20.2, neLat: 30.2, neLon: 40.2 });
   expect(cachedFetchJson).toHaveBeenCalledTimes(2);
-  expect(cachedFetchJson.mock.calls[0]?.[0]).toBe('military:bases:v2:10:20:30:40:7::::fixture-version');
+  expect(cachedFetchJson.mock.calls[0]?.[0]).toBe('military:bases:v2:10:20:31:41:7::::fixture-version');
   expect(cachedFetchJson.mock.calls[1]?.[0]).toBe(cachedFetchJson.mock.calls[0]?.[0]);
   expect(geoSearchByBox).toHaveBeenCalledTimes(2);
   expect(geoSearchByBox.mock.calls[0]).toEqual(geoSearchByBox.mock.calls[1]);

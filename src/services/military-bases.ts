@@ -13,7 +13,7 @@ interface CachedResult {
   cacheKey: string;
 }
 
-const quantize = (v: number, step: number) => Math.round(v / step) * step;
+const quantize = (v: number, step: number, upper = false) => (upper ? Math.ceil(v / step) : Math.floor(v / step)) * step;
 
 function getBboxGridStep(zoom: number): number {
   if (zoom < 5) return 5;
@@ -54,9 +54,9 @@ export async function fetchMilitaryBases(
   const floorZoom = Math.max(0, Math.min(22, Math.floor(zoom))) || 3;
   const step = getBboxGridStep(floorZoom);
   swLat = quantize(Math.max(-90, Math.min(90, swLat)), step);
-  neLat = quantize(Math.max(-90, Math.min(90, neLat)), step);
+  neLat = quantize(Math.max(-90, Math.min(90, neLat)), step, true);
   swLon = quantize(Math.max(-180, Math.min(180, swLon)), step);
-  neLon = quantize(Math.max(-180, Math.min(180, neLon)), step);
+  neLon = quantize(Math.max(-180, Math.min(180, neLon)), step, true);
   const qBbox = [swLat, swLon, neLat, neLon].join(':');
   const cacheKey = `${qBbox}:${floorZoom}:${filters?.type || ''}:${filters?.kind || ''}:${filters?.country || ''}`;
 

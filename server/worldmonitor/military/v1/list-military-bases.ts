@@ -14,7 +14,7 @@ const VALID_TYPES = new Set(filterParamContracts.militaryBaseTypes);
 const VALID_KINDS = new Set(filterParamContracts.militaryBaseKinds);
 const COUNTRY_RE = /^[A-Z]{2}$/;
 
-const quantize = (v: number, step: number) => Math.round(v / step) * step;
+const quantize = (v: number, step: number, upper = false) => (upper ? Math.ceil(v / step) : Math.floor(v / step)) * step;
 const MAX_FILTER_LENGTH = 20;
 
 function normalizeOptionalFilter(
@@ -120,9 +120,9 @@ export async function listMilitaryBases(
     const zoom = Math.max(0, Math.min(22, req.zoom || 3));
     const gridStep = getBboxGridStep(zoom);
     const swLat = quantize(Math.max(-90, Math.min(90, req.swLat)), gridStep);
-    const neLat = quantize(Math.max(-90, Math.min(90, req.neLat)), gridStep);
+    const neLat = quantize(Math.max(-90, Math.min(90, req.neLat)), gridStep, true);
     const swLon = quantize(Math.max(-180, Math.min(180, req.swLon)), gridStep);
-    const neLon = quantize(Math.max(-180, Math.min(180, req.neLon)), gridStep);
+    const neLon = quantize(Math.max(-180, Math.min(180, req.neLon)), gridStep, true);
 
     const typeFilter = normalizeOptionalFilter(req.type, v => v.toLowerCase());
     const kindFilter = normalizeOptionalFilter(req.kind, v => v.toLowerCase());
