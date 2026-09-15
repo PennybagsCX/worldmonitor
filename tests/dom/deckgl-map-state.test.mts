@@ -463,3 +463,16 @@ describe('DeckGLMap military base viewport commits', () => {
     expect(state.serverBases).toEqual([]);
   });
 });
+
+it('fetches the current viewport when bases are enabled without another map movement', async () => {
+  listMilitaryBases.mockReset();
+  listMilitaryBases.mockResolvedValue({ bases: [{ id: 'enabled', name: 'enabled', latitude: 60, longitude: 110 }], clusters: [], totalInView: 1, truncated: false });
+  const { map, fake } = await mapWith(initialState({ layers: allLayersOff() }));
+  fake.setCenter([110, 60]); fake.setZoom(8); fake.emit('moveend', {});
+  await vi.advanceTimersByTimeAsync(300);
+  expect(listMilitaryBases).not.toHaveBeenCalled();
+  map.setLayers({ ...allLayersOff(), bases: true });
+  await vi.advanceTimersByTimeAsync(300);
+  expect(listMilitaryBases).toHaveBeenCalledTimes(1);
+  expect((map as unknown as { serverBases: { id: string }[] }).serverBases[0]?.id).toBe('enabled');
+});

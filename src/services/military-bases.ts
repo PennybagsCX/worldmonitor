@@ -21,11 +21,6 @@ function getBboxGridStep(zoom: number): number {
   return 0.5;
 }
 
-function quantizeBbox(swLat: number, swLon: number, neLat: number, neLon: number, zoom: number): string {
-  const step = getBboxGridStep(zoom);
-  return [quantize(swLat, step), quantize(swLon, step), quantize(neLat, step), quantize(neLon, step)].join(':');
-}
-
 function entryToEnriched(e: MilitaryBaseEntry): MilitaryBaseEnriched {
   return {
     id: e.id,
@@ -56,8 +51,13 @@ export async function fetchMilitaryBases(
   zoom: number,
   filters?: { type?: string; kind?: string; country?: string },
 ): Promise<CachedResult | null> {
-  const qBbox = quantizeBbox(swLat, swLon, neLat, neLon, zoom);
-  const floorZoom = Math.floor(zoom);
+  const floorZoom = Math.max(0, Math.min(22, Math.floor(zoom))) || 3;
+  const step = getBboxGridStep(floorZoom);
+  swLat = quantize(Math.max(-90, Math.min(90, swLat)), step);
+  neLat = quantize(Math.max(-90, Math.min(90, neLat)), step);
+  swLon = quantize(Math.max(-180, Math.min(180, swLon)), step);
+  neLon = quantize(Math.max(-180, Math.min(180, neLon)), step);
+  const qBbox = [swLat, swLon, neLat, neLon].join(':');
   const cacheKey = `${qBbox}:${floorZoom}:${filters?.type || ''}:${filters?.kind || ''}:${filters?.country || ''}`;
 
   if (lastResult && lastResult.cacheKey === cacheKey) {

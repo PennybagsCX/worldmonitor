@@ -64,3 +64,15 @@ describe('military base request identity', () => {
     expect(listMilitaryBases).toHaveBeenCalledTimes(3);
   });
 });
+
+it('sends the same normalized bounds used for coalescing and cache identity', async () => {
+  const fetchBases = await service();
+  const pending = deferred();
+  listMilitaryBases.mockReturnValue(pending.promise);
+  const a = fetchBases(10.1, 20.1, 30.1, 40.1, 7.9);
+  const b = fetchBases(10.2, 20.2, 30.2, 40.2, 7.9);
+  expect(listMilitaryBases).toHaveBeenCalledTimes(1);
+  expect(listMilitaryBases).toHaveBeenCalledWith({ swLat: 10, swLon: 20, neLat: 30, neLon: 40, zoom: 7, type: '', kind: '', country: '' });
+  pending.resolve(response('shared-grid'));
+  expect(await a).toBe(await b);
+});

@@ -5816,6 +5816,7 @@ export class DeckGLMap {
           this.state.layers[layer] = enabled;
           if (layer === 'military' && !enabled) this.clearFlightTrails();
           if (layer === 'flights') this.manageAircraftTimer(enabled);
+          if (layer === 'bases' && enabled) this.debouncedFetchBases();
           if (this.state.layers.weather && !prevRadar) this.startWeatherRadar();
           else if (!this.state.layers.weather && prevRadar) this.stopWeatherRadar();
           if (this.state.layers.cyberThreats && !prevCyber && !this.aptGroupsLoaded) this.loadAptGroups();
@@ -6455,9 +6456,11 @@ export class DeckGLMap {
     }
     const prevRadar = this.state.layers.weather;
     const prevCyber = this.state.layers.cyberThreats;
+    const prevBases = this.state.layers.bases;
     this.state.layers = normalizeExclusiveChoropleths(next, this.state.layers);
     if (!this.state.layers.military) this.clearFlightTrails();
     this.manageAircraftTimer(this.state.layers.flights);
+    if (this.state.layers.bases && !prevBases) this.debouncedFetchBases();
     if (this.state.layers.weather && !prevRadar) this.startWeatherRadar();
     else if (!this.state.layers.weather && prevRadar) this.stopWeatherRadar();
     if (this.state.layers.cyberThreats && !prevCyber && !this.aptGroupsLoaded) this.loadAptGroups();
@@ -7653,6 +7656,7 @@ export class DeckGLMap {
       if (layer === 'weather') this.startWeatherRadar();
       if (layer === 'cyberThreats' && !this.aptGroupsLoaded) this.loadAptGroups();
       if (layer === 'flights') this.manageAircraftTimer(true);
+      if (layer === 'bases') this.debouncedFetchBases();
       this.render();
       this.updateLegend();
       this.onLayerChange?.(layer, true, 'programmatic');
@@ -7687,6 +7691,7 @@ export class DeckGLMap {
     else if (!this.state.layers.weather && prevRadar) this.stopWeatherRadar();
     if (this.state.layers.cyberThreats && !prevCyber && !this.aptGroupsLoaded) this.loadAptGroups();
     if (layer === 'flights') this.manageAircraftTimer(this.state.layers.flights);
+    if (layer === 'bases' && this.state.layers.bases) this.debouncedFetchBases();
     this.render();
     this.updateLegend();
     this.onLayerChange?.(layer, this.state.layers[layer], 'programmatic');
