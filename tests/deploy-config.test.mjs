@@ -2699,7 +2699,7 @@ describe('security header guardrails', () => {
     for (const directive of ['frame-src', 'frame-ancestors']) {
       const tokens = getCspDirectiveTokens(csp, directive);
       assert.ok(tokens.includes("'self'"), `${directive} must allow same-origin preview frames`);
-      assert.ok(tokens.includes('https://vercel.live'), `${directive} must allow the Vercel toolbar`);
+      assert.ok(tokens.some((token) => token === 'https://vercel.live'), `${directive} must allow the Vercel toolbar`);
       assert.ok(!tokens.includes('https://*.vercel.app'), `${directive} must not trust every Vercel team`);
     }
     assert.deepEqual(findOpenFrameSources(getCspDirectiveTokens(csp, 'frame-ancestors')), []);
