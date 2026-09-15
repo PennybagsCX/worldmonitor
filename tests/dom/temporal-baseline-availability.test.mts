@@ -10,21 +10,35 @@ it('distinguishes absent, failed, valid empty and recovered temporal snapshots',
   source.hydrated = undefined;
   consumeServerAnomalies();
   expect(hasTemporalBaselineSnapshot()).toBe(false);
-  source.hydrated = { anomalies: [], trackedTypes: ['news'], computedAt: '2026-09-15T00:00:00Z' };
+
+  const goodSnapshot = { anomalies: [], trackedTypes: ['news'], computedAt: '2026-09-15T00:00:00Z' };
+  source.hydrated = goodSnapshot;
   consumeServerAnomalies();
   expect(hasTemporalBaselineSnapshot()).toBe(true);
+
   source.read.mockRejectedValueOnce(new Error('Synthetic upstream failure'));
-  await fetchLiveAnomalies();
+  const recovered = await fetchLiveAnomalies();
   expect(hasTemporalBaselineSnapshot()).toBe(true);
+  expect(recovered).toEqual({ anomalies: [], trackedTypes: ['news'] });
+
+  // Soft-miss empty computedAt must preserve last-known-good, unlike a cleared snapshot.
+  source.read.mockResolvedValueOnce({ anomalies: [], trackedTypes: [], computedAt: '' });
+  const softMiss = await fetchLiveAnomalies();
+  expect(hasTemporalBaselineSnapshot()).toBe(true);
+  expect(softMiss).toEqual({ anomalies: [], trackedTypes: ['news'] });
+
   source.hydrated = undefined;
   consumeServerAnomalies();
   expect(hasTemporalBaselineSnapshot()).toBe(false);
+
   source.read.mockRejectedValueOnce(new Error('Synthetic upstream failure'));
   await fetchLiveAnomalies();
   expect(hasTemporalBaselineSnapshot()).toBe(false);
+
   source.read.mockResolvedValueOnce({ anomalies: [], trackedTypes: [], computedAt: '' });
   await fetchLiveAnomalies();
   expect(hasTemporalBaselineSnapshot()).toBe(false);
+
   source.read.mockResolvedValueOnce({ anomalies: [], trackedTypes: ['news'], computedAt: '2026-09-15T00:01:00Z' });
   await fetchLiveAnomalies();
   expect(hasTemporalBaselineSnapshot()).toBe(true);

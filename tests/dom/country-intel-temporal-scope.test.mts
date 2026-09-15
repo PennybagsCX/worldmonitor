@@ -95,7 +95,7 @@ it('renders unavailable temporal evidence in both country views without counting
   document.body.replaceChildren();
 });
 
-it('refreshes deep-dive signal chips when updateScore receives new signals', async () => {
+it('refreshes deep-dive signal chips and breakdown when updateScore receives new signals', async () => {
   const { CountryDeepDivePanel } = await import('@/components/CountryDeepDivePanel');
   const panel = new CountryDeepDivePanel();
   const body = document.createElement('div');
@@ -103,10 +103,18 @@ it('refreshes deep-dive signal chips when updateScore receives new signals', asy
   const pending = { ...await manager().getCountrySignals('FR', 'France'), temporalAnomalies: null, globalTemporalAnomalies: null };
   Reflect.get(panel, 'renderInitialSignals').call(panel, pending);
   expect(body.querySelector('.cdp-signal-chips')?.textContent).toContain('Temporal observations unavailable');
-  const refreshed = { ...pending, temporalAnomalies: 3, globalTemporalAnomalies: 0 };
+  const refreshed = {
+    ...pending,
+    temporalAnomalies: 3,
+    globalTemporalAnomalies: 0,
+    earthquakes: 1,
+    satelliteFires: 2,
+  };
   panel.updateScore(null, refreshed);
   const chips = body.querySelector('.cdp-signal-chips')?.textContent ?? '';
   expect(chips).toContain('3');
   expect(chips).not.toContain('Temporal observations unavailable');
+  // low bucket = earthquakes + temporal + satellite fires
+  expect(body.querySelector('.cdp-signal-breakdown')?.textContent).toContain('6');
   document.body.replaceChildren();
 });

@@ -405,7 +405,7 @@ export class CountryIntelManager implements AppModule {
       const scoreCode = normalizeCiiCountryCode(code);
       const score = getCachedCountryScore(scoreCode);
 
-      const signals = await raceWebMcpAbort(
+      let signals = await raceWebMcpAbort(
         this.getCountrySignals(code, country),
         opts?.signal,
       );
@@ -829,6 +829,13 @@ export class CountryIntelManager implements AppModule {
         let briefText = '';
         let briefResult: CountryIntelBriefResult | null = null;
         try {
+          // Temporal feed can arrive after the initial signal snapshot; re-read
+          // so chips, prompt, and fallback lines share one fresh observation set.
+          signals = await this.getCountrySignals(code, country);
+          if (token !== this.briefRequestToken || this.ctx.countryBriefPage?.getCode() !== code) return;
+          Object.assign(context, signals);
+          this.ctx.countryBriefPage?.updateScore?.(score, signals);
+
           let contextSnapshot = this.buildBriefContextSnapshot(country, code, score, signals, context);
 
           if (isHeadlineMemoryEnabled() && mlWorker.isAvailable && mlWorker.isModelLoaded('embeddings') && briefHeadlines.length > 0) {
@@ -882,27 +889,7 @@ export class CountryIntelManager implements AppModule {
           if (fallbackBrief) {
             this.ctx.countryBriefPage?.updateBrief({ brief: fallbackBrief, country, code, fallback: true, sources: briefSources });
           } else {
-            const lines: string[] = [];
-            if (score) lines.push(t('countryBrief.fallback.instabilityIndex', { score: String(score.score), level: t(`countryBrief.levels.${score.level}`), trend: t(`countryBrief.trends.${score.trend}`) }));
-            if (signals.protests > 0) lines.push(t('countryBrief.fallback.protestsDetected', { count: String(signals.protests) }));
-            if (signals.militaryFlights > 0) lines.push(t('countryBrief.fallback.aircraftTracked', { count: String(signals.militaryFlights) }));
-            if (signals.militaryVessels > 0) lines.push(t('countryBrief.fallback.vesselsTracked', { count: String(signals.militaryVessels) }));
-            if (signals.activeStrikes > 0) lines.push(t('countryBrief.fallback.activeStrikes', { count: String(signals.activeStrikes) }));
-            if (signals.travelAdvisoryMaxLevel === 'do-not-travel') lines.push(`⚠️ Travel advisory: Do Not Travel (${signals.travelAdvisories} source${signals.travelAdvisories > 1 ? 's' : ''})`);
-            else if (signals.travelAdvisoryMaxLevel === 'reconsider') lines.push(`⚠️ Travel advisory: Reconsider Travel (${signals.travelAdvisories} source${signals.travelAdvisories > 1 ? 's' : ''})`);
-            if (signals.outages > 0) lines.push(t('countryBrief.fallback.internetOutages', { count: String(signals.outages) }));
-            if (signals.criticalNews > 0) lines.push(`🚨 Critical headlines in scope: ${signals.criticalNews}`);
-            if (signals.cyberThreats > 0) lines.push(`🛡️ Cyber threat indicators: ${signals.cyberThreats}`);
-            if (signals.aisDisruptions > 0) lines.push(`🚢 Maritime AIS disruptions: ${signals.aisDisruptions}`);
-            if (signals.satelliteFires > 0) lines.push(`🔥 Satellite fire detections: ${signals.satelliteFires}`);
-            if (signals.radiationAnomalies > 0) lines.push(`☢️ Radiation anomalies: ${signals.radiationAnomalies}`);
-            if (signals.temporalAnomalies === null) lines.push('⏱️ Country temporal anomaly observations unavailable.');
-            else if (signals.temporalAnomalies > 0) lines.push(`⏱️ Observed country temporal anomalies: ${signals.temporalAnomalies}`);
-            if ((signals.globalTemporalAnomalies ?? 0) > 0) lines.push(`Global context: ${signals.globalTemporalAnomalies} observed temporal anomalies; not attributed to this country.`);
-            if (signals.thermalEscalations > 0) lines.push(`🌡️ Thermal escalation clusters: ${signals.thermalEscalations}`);
-            if (signals.earthquakes > 0) lines.push(t('countryBrief.fallback.recentEarthquakes', { count: String(signals.earthquakes) }));
-            if (signals.orefHistory24h > 0) lines.push(`🚨 Sirens in past 24h: ${signals.orefHistory24h}`);
-            if (context.stockIndex) lines.push(t('countryBrief.fallback.stockIndex', { value: context.stockIndex }));
+            const lines = this.buildFallbackSignalLines(score, signals, country, context);
             if (lines.length > 0) {
               this.ctx.countryBriefPage?.updateBrief({ brief: lines.join('\n'), country, code, fallback: true });
             } else {
@@ -1160,7 +1147,16 @@ export class CountryIntelManager implements AppModule {
     const score = getCachedCountryScore(scoreCode);
     void this.getCountrySignals(code, name)
       .then((signals) => {
-        if (page.isVisible() && page.getCode() === code) page.updateScore?.(score, signals);
+        if (!(page.isVisible() && page.getCode() === code)) return;
+        page.updateScore?.(score, signals);
+        // Fallback assessments embed temporal status inline; refresh that copy
+        // when chips change so unavailable/zero/global context stays consistent.
+        if (page.isFallbackBrief?.()) {
+          const lines = this.buildFallbackSignalLines(score, signals, name, {});
+          if (lines.length > 0) {
+            page.updateBrief({ brief: lines.join('\n'), country: name, code, fallback: true });
+          }
+        }
       })
       .catch((err) => {
         console.warn('[CountryBrief] refreshOpenBrief signal fetch failed:', err);
@@ -1216,6 +1212,50 @@ export class CountryIntelManager implements AppModule {
       generatedAt: body.generatedAt,
       cached: body.cached,
     };
+  }
+
+
+  private buildFallbackSignalLines(
+    score: CountryScore | null,
+    signals: CountryBriefSignals,
+    _country: string,
+    context: Record<string, unknown>,
+  ): string[] {
+    const lines: string[] = [];
+    if (score) {
+      lines.push(t('countryBrief.fallback.instabilityIndex', {
+        score: String(score.score),
+        level: t(`countryBrief.levels.${score.level}`),
+        trend: t(`countryBrief.trends.${score.trend}`),
+      }));
+    }
+    if (signals.protests > 0) lines.push(t('countryBrief.fallback.protestsDetected', { count: String(signals.protests) }));
+    if (signals.militaryFlights > 0) lines.push(t('countryBrief.fallback.aircraftTracked', { count: String(signals.militaryFlights) }));
+    if (signals.militaryVessels > 0) lines.push(t('countryBrief.fallback.vesselsTracked', { count: String(signals.militaryVessels) }));
+    if (signals.activeStrikes > 0) lines.push(t('countryBrief.fallback.activeStrikes', { count: String(signals.activeStrikes) }));
+    if (signals.travelAdvisoryMaxLevel === 'do-not-travel') {
+      lines.push(`⚠️ Travel advisory: Do Not Travel (${signals.travelAdvisories} source${signals.travelAdvisories > 1 ? 's' : ''})`);
+    } else if (signals.travelAdvisoryMaxLevel === 'reconsider') {
+      lines.push(`⚠️ Travel advisory: Reconsider Travel (${signals.travelAdvisories} source${signals.travelAdvisories > 1 ? 's' : ''})`);
+    }
+    if (signals.outages > 0) lines.push(t('countryBrief.fallback.internetOutages', { count: String(signals.outages) }));
+    if (signals.criticalNews > 0) lines.push(`🚨 Critical headlines in scope: ${signals.criticalNews}`);
+    if (signals.cyberThreats > 0) lines.push(`🛡️ Cyber threat indicators: ${signals.cyberThreats}`);
+    if (signals.aisDisruptions > 0) lines.push(`🚢 Maritime AIS disruptions: ${signals.aisDisruptions}`);
+    if (signals.satelliteFires > 0) lines.push(`🔥 Satellite fire detections: ${signals.satelliteFires}`);
+    if (signals.radiationAnomalies > 0) lines.push(`☢️ Radiation anomalies: ${signals.radiationAnomalies}`);
+    if (signals.temporalAnomalies === null) lines.push('⏱️ Country temporal anomaly observations unavailable.');
+    else if (signals.temporalAnomalies > 0) lines.push(`⏱️ Observed country temporal anomalies: ${signals.temporalAnomalies}`);
+    if ((signals.globalTemporalAnomalies ?? 0) > 0) {
+      lines.push(`Global context: ${signals.globalTemporalAnomalies} observed temporal anomalies; not attributed to this country.`);
+    }
+    if (signals.thermalEscalations > 0) lines.push(`🌡️ Thermal escalation clusters: ${signals.thermalEscalations}`);
+    if (signals.earthquakes > 0) lines.push(t('countryBrief.fallback.recentEarthquakes', { count: String(signals.earthquakes) }));
+    if (signals.orefHistory24h > 0) lines.push(`🚨 Sirens in past 24h: ${signals.orefHistory24h}`);
+    if (typeof context.stockIndex === 'string' && context.stockIndex) {
+      lines.push(t('countryBrief.fallback.stockIndex', { value: context.stockIndex }));
+    }
+    return lines;
   }
 
   private buildBriefContextSnapshot(

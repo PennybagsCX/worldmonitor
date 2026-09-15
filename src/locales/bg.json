@@ -120,7 +120,7 @@
       "sirens24h": "Сирени / 24h",
       "aviationDisruptions": "Нарушения на авиацията",
       "gpsJammingZones": "GPS закълчаване зони",
-      "temporalUnavailable": "Временни наблюдения недостъпни"
+      "temporalUnavailable": "Времевите наблюдения са недостъпни"
     },
     "fallback": {
       "instabilityIndex": "**Индекс на нестабилност: {{score}}/100** ({{level}}, {{trend}})",

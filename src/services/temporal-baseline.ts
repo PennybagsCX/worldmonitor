@@ -93,6 +93,12 @@ export async function fetchLiveAnomalies(): Promise<{ anomalies: TemporalAnomaly
       trackedTypes: resp.trackedTypes ?? [],
     };
     if (!rememberSnapshot(result.anomalies, result.trackedTypes, resp.computedAt)) {
+      // Soft-miss (empty/invalid computedAt) must not wipe a prior good snapshot.
+      // Mirror the catch path: keep lastKnownGood available when present.
+      if (lastKnownGood) {
+        snapshotAvailable = true;
+        return lastKnownGood;
+      }
       snapshotAvailable = false;
       return { anomalies: [], trackedTypes: [] };
     }

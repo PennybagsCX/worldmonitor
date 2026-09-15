@@ -120,7 +120,7 @@
       "sirens24h": "Sirenler / 24s",
       "aviationDisruptions": "Havacılık Aksaklıkları",
       "gpsJammingZones": "GPS Karıştırma Bölgeleri",
-      "temporalUnavailable": "Temporal observations kullanılamıyor"
+      "temporalUnavailable": "Zamansal gözlemler kullanılamıyor"
     },
     "fallback": {
       "instabilityIndex": "**Istikrarsizlik Endeksi: {{score}}/100** ({{level}}, {{trend}})",
