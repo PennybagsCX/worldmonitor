@@ -157,7 +157,7 @@ export function isAllowedClerkAuthorizedParty(azp: string): boolean {
   const siteUrl = process.env.SITE_URL?.trim();
   if (!siteUrl) return false;
   try {
-    return new URL(siteUrl).origin === azp;
+    return new URL(siteUrl).origin === new URL(azp).origin;
   } catch {
     return false;
   }

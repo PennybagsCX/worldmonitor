@@ -679,6 +679,40 @@ describe('validateBearerToken (with JWKS)', () => {
     assert.equal(result.valid, true);
     assert.equal(result.userId, 'user_no_azp');
   });
+
+  it('fails open when azp is an empty string', async () => {
+    const token = await signToken({ sub: 'user_empty_azp', plan: 'pro', azp: '' });
+    const result = await validateBearerToken(token);
+    assert.equal(result.valid, true);
+    assert.equal(result.userId, 'user_empty_azp');
+  });
+
+  it('rejects a non-string azp claim', async () => {
+    for (const azp of [1, ['https://worldmonitor.app'], { origin: 'https://worldmonitor.app' }]) {
+      const token = await signToken({ sub: 'user_bad_azp_type', plan: 'pro', azp });
+      assert.deepEqual(
+        await validateBearerToken(token),
+        { valid: false, reason: 'invalid' },
+        `expected non-string azp rejected: ${JSON.stringify(azp)}`,
+      );
+    }
+  });
+
+  it('rejects SITE_URL mismatch when azp is outside the CORS allowlist', async () => {
+    const originalSite = process.env.SITE_URL;
+    process.env.SITE_URL = 'https://self-hosted.example';
+    try {
+      const token = await signToken({
+        sub: 'user_azp_site_mismatch',
+        plan: 'pro',
+        azp: 'https://other.example',
+      });
+      assert.deepEqual(await validateBearerToken(token), { valid: false, reason: 'invalid' });
+    } finally {
+      if (originalSite === undefined) delete process.env.SITE_URL;
+      else process.env.SITE_URL = originalSite;
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
