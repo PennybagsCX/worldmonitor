@@ -16,9 +16,9 @@ for (const count of [12, 50]) {
       const { initI18n } = await import('/src/services/i18n.ts');
       await initI18n();
       const symbols = Array.from({ length: count }, (_, i) => `SYM${i}`);
-      localStorage.setItem('wm-market-watchlist-v1', JSON.stringify(symbols.map((symbol, i) => ({
+      localStorage.setItem('wm-market-watchlist-v1', JSON.stringify([...symbols.map((symbol, i) => ({
         symbol: i % 2 ? symbol.toLowerCase() : symbol, name: symbol, display: symbol,
-      }))));
+      })), ...(count === 12 ? [{ symbol: 'sym0', name: 'Duplicate case', display: 'SYM0' }] : [])]));
       const liveRequests: string[] = [];
       let fail = false;
       const snapshot = (symbol: string, stale = false) => ({
