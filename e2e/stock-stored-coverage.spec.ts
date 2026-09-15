@@ -77,11 +77,17 @@ for (const count of [12, 50]) {
     await expect(page.locator('#fixture-status')).toHaveText(JSON.stringify([`sym${count - 1}`, `sym${count - 1}`]));
     await expect(page.locator('[data-panel="stock-analysis"]')).toContainText(`${count} symbols`);
     await expect(page.locator('[data-panel="stock-backtest"]')).toContainText(`${count} symbols`);
+    for (const id of ['stock-analysis', 'stock-backtest']) {
+      await expect(page.locator(`[data-panel="${id}"]`).getByRole('row').filter({ hasText: 'SYM0' })).toBeVisible();
+    }
     await page.screenshot({ path: testInfo.outputPath(`stock-${count}-partial.png`), fullPage: true });
     await page.getByRole('button', { name: 'Refresh stock panels', exact: true }).click();
     await expect(page.locator('#fixture-status')).toHaveText(JSON.stringify([`sym${count - 1}`, `sym${count - 1}`]));
     await expect(page.locator('[data-panel="stock-analysis"]')).toContainText(`${count} symbols`);
     await expect(page.locator('[data-panel="stock-backtest"]')).toContainText(`${count} symbols`);
+    for (const id of ['stock-analysis', 'stock-backtest']) {
+      await expect(page.locator(`[data-panel="${id}"]`).getByRole('row').filter({ hasText: 'SYM0' })).toBeVisible();
+    }
     await page.screenshot({ path: testInfo.outputPath(`stock-${count}-fallback.png`), fullPage: true });
     for (const id of ['stock-analysis', 'stock-backtest']) {
       const panel = page.locator(`[data-panel="${id}"]`);
