@@ -15,6 +15,12 @@ it('distinguishes absent, failed, valid empty and recovered temporal snapshots',
   expect(hasTemporalBaselineSnapshot()).toBe(true);
   source.read.mockRejectedValueOnce(new Error('Synthetic upstream failure'));
   await fetchLiveAnomalies();
+  expect(hasTemporalBaselineSnapshot()).toBe(true);
+  source.hydrated = undefined;
+  consumeServerAnomalies();
+  expect(hasTemporalBaselineSnapshot()).toBe(false);
+  source.read.mockRejectedValueOnce(new Error('Synthetic upstream failure'));
+  await fetchLiveAnomalies();
   expect(hasTemporalBaselineSnapshot()).toBe(false);
   source.read.mockResolvedValueOnce({ anomalies: [], trackedTypes: [], computedAt: '' });
   await fetchLiveAnomalies();

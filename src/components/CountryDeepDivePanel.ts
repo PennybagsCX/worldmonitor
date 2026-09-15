@@ -2592,6 +2592,10 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
   public updateScore(score: CountryScore | null, _signals: CountryBriefSignals): void {
     this.currentScore = score;
     this.currentSignals = _signals;
+    if (this.signalsBody) {
+      const chips = this.buildSignalChipsElement(_signals);
+      this.signalsBody.querySelector('.cdp-signal-chips')?.replaceWith(chips);
+    }
     if (!this.scoreCard) return;
     // Partial DOM update: score number, level color, trend, component bars only
     const top = this.scoreCard.firstElementChild as HTMLElement | null;
@@ -3400,10 +3404,7 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     this.content.replaceChildren();
   }
 
-  private renderInitialSignals(signals: CountryBriefSignals): void {
-    if (!this.signalsBody) return;
-    this.signalsBody.replaceChildren();
-
+  private buildSignalChipsElement(signals: CountryBriefSignals): HTMLElement {
     const chips = this.el('div', 'cdp-signal-chips');
     this.addSignalChip(chips, signals.criticalNews, t('countryBrief.chips.criticalNews'), '🚨', 'conflict');
     this.addSignalChip(chips, signals.protests, t('countryBrief.chips.protests'), '📢', 'protest');
@@ -3414,7 +3415,7 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     this.addSignalChip(chips, signals.satelliteFires, t('countryBrief.chips.satelliteFires'), '🔥', 'climate');
     this.addSignalChip(chips, signals.radiationAnomalies, 'Radiation anomalies', '☢️', 'outage');
     if (signals.temporalAnomalies === null) {
-      chips.append(this.makeSignalChip('⏱️ Temporal observations unavailable', 'outage'));
+      chips.append(this.makeSignalChip(`⏱️ ${t('countryBrief.chips.temporalUnavailable')}`, 'outage'));
     } else {
       this.addSignalChip(chips, signals.temporalAnomalies, t('countryBrief.chips.temporalAnomalies'), '⏱️', 'outage');
     }
@@ -3439,6 +3440,14 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     this.addSignalChip(chips, signals.orefHistory24h, t('countryBrief.chips.sirens24h'), '🕓', 'conflict');
     this.addSignalChip(chips, signals.aviationDisruptions, t('countryBrief.chips.aviationDisruptions'), '🚫', 'outage');
     this.addSignalChip(chips, signals.gpsJammingHexes, t('countryBrief.chips.gpsJammingZones'), '📡', 'outage');
+    return chips;
+  }
+
+  private renderInitialSignals(signals: CountryBriefSignals): void {
+    if (!this.signalsBody) return;
+    this.signalsBody.replaceChildren();
+
+    const chips = this.buildSignalChipsElement(signals);
     this.signalsBody.append(chips);
 
     this.signalBreakdownBody = this.el('div', 'cdp-signal-breakdown');

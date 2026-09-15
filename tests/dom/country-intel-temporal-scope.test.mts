@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppContext } from '@/app/app-context';
 import type { CountrySignalCluster } from '@/services/signal-aggregator';
+import { initTestI18n } from './helpers/i18n.mts';
 
 const snapshot = vi.hoisted(() => ({ read: vi.fn(), available: true }));
 vi.mock('@/services/temporal-baseline', () => ({ hasTemporalBaselineSnapshot: () => snapshot.available }));
@@ -23,6 +24,10 @@ function cluster(country: string, temporalCount: number): CountrySignalCluster {
 function manager() {
   return new CountryIntelManager({ latestClusters: [], intelligenceCache: {} } as unknown as AppContext);
 }
+
+beforeAll(async () => {
+  await initTestI18n();
+});
 
 describe('Country Brief temporal observation scope', () => {
   beforeEach(() => { snapshot.read.mockReset(); snapshot.available = true; });
@@ -87,5 +92,21 @@ it('renders unavailable temporal evidence in both country views without counting
   Reflect.get(panel, 'renderInitialSignals').call(panel, signals);
   expect(body.textContent).toContain('Temporal observations unavailable');
   expect(body.querySelector('.cdp-signal-chips')?.textContent).not.toContain('9');
+  document.body.replaceChildren();
+});
+
+it('refreshes deep-dive signal chips when updateScore receives new signals', async () => {
+  const { CountryDeepDivePanel } = await import('@/components/CountryDeepDivePanel');
+  const panel = new CountryDeepDivePanel();
+  const body = document.createElement('div');
+  Reflect.set(panel, 'signalsBody', body);
+  const pending = { ...await manager().getCountrySignals('FR', 'France'), temporalAnomalies: null, globalTemporalAnomalies: null };
+  Reflect.get(panel, 'renderInitialSignals').call(panel, pending);
+  expect(body.querySelector('.cdp-signal-chips')?.textContent).toContain('Temporal observations unavailable');
+  const refreshed = { ...pending, temporalAnomalies: 3, globalTemporalAnomalies: 0 };
+  panel.updateScore(null, refreshed);
+  const chips = body.querySelector('.cdp-signal-chips')?.textContent ?? '';
+  expect(chips).toContain('3');
+  expect(chips).not.toContain('Temporal observations unavailable');
   document.body.replaceChildren();
 });

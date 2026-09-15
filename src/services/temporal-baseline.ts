@@ -26,9 +26,25 @@ const client = new InfrastructureServiceClient(getRpcBaseUrl(), { fetch: (...arg
 
 const getSeverity = getAnomalySeverity;
 let snapshotAvailable = false;
+let lastKnownGood: { anomalies: TemporalAnomaly[]; trackedTypes: string[] } | null = null;
 
 export function hasTemporalBaselineSnapshot(): boolean {
   return snapshotAvailable;
+}
+
+function isValidComputedAt(computedAt?: string): boolean {
+  return Boolean(computedAt && Number.isFinite(Date.parse(computedAt)));
+}
+
+function rememberSnapshot(
+  anomalies: TemporalAnomaly[],
+  trackedTypes: string[],
+  computedAt?: string,
+): boolean {
+  if (!isValidComputedAt(computedAt)) return false;
+  snapshotAvailable = true;
+  lastKnownGood = { anomalies, trackedTypes };
+  return true;
 }
 
 function mapServerAnomaly(a: TemporalAnomalyProto): TemporalAnomaly {
@@ -50,25 +66,44 @@ export function consumeServerAnomalies(): { anomalies: TemporalAnomaly[]; tracke
     computedAt?: string;
   } | undefined;
 
-  snapshotAvailable = Boolean(raw?.computedAt && Number.isFinite(Date.parse(raw.computedAt)));
-  if (!raw?.anomalies) return { anomalies: [], trackedTypes: [] };
-  return {
+  if (!raw?.anomalies) {
+    if (!isValidComputedAt(raw?.computedAt)) {
+      snapshotAvailable = false;
+      lastKnownGood = null;
+    }
+    return { anomalies: [], trackedTypes: raw?.trackedTypes ?? [] };
+  }
+
+  const result = {
     anomalies: raw.anomalies.map(mapServerAnomaly),
     trackedTypes: raw.trackedTypes ?? [],
   };
+  if (!rememberSnapshot(result.anomalies, result.trackedTypes, raw.computedAt)) {
+    snapshotAvailable = false;
+    lastKnownGood = null;
+  }
+  return result;
 }
 
 export async function fetchLiveAnomalies(): Promise<{ anomalies: TemporalAnomaly[]; trackedTypes: string[] }> {
   try {
     const resp = await client.listTemporalAnomalies({});
-    snapshotAvailable = Boolean(resp.computedAt && Number.isFinite(Date.parse(resp.computedAt)));
-    return {
+    const result = {
       anomalies: (resp.anomalies ?? []).map(mapServerAnomaly),
       trackedTypes: resp.trackedTypes ?? [],
     };
+    if (!rememberSnapshot(result.anomalies, result.trackedTypes, resp.computedAt)) {
+      snapshotAvailable = false;
+      return { anomalies: [], trackedTypes: [] };
+    }
+    return result;
   } catch (e) {
-    snapshotAvailable = false;
     console.warn('[TemporalBaseline] Live fetch failed:', e);
+    if (lastKnownGood) {
+      snapshotAvailable = true;
+      return lastKnownGood;
+    }
+    snapshotAvailable = false;
     return { anomalies: [], trackedTypes: [] };
   }
 }
