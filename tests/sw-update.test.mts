@@ -628,8 +628,6 @@ describe('installSwUpdateHandler', () => {
     assert.equal(env.reloadCalls.length, 1, 'reload fires when fallback reports not-rendered');
   });
 
-  // --- null document.body (Sentry WORLDMONITOR-12J) -------------------------
-
   it('skips the toast when document.body is null and still appends when body exists', () => {
     env.swContainer._controller = {};
     install(env);
