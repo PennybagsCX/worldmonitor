@@ -26,7 +26,7 @@ describe('data-loader temporal refresh', () => {
     const { DataLoaderManager } = await import('@/app/data-loader');
     const loader = new DataLoaderManager(
       { statusPanel: null } as never,
-      { refreshOpenCountryBrief },
+      { renderCriticalBanner: () => undefined, refreshOpenCountryBrief },
     );
     await loader.refreshTemporalBaseline();
     expect(aggregator.ingest).toHaveBeenCalled();
