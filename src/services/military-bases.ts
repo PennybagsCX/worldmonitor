@@ -47,7 +47,7 @@ function entryToEnriched(e: MilitaryBaseEntry): MilitaryBaseEnriched {
 }
 
 let lastResult: CachedResult | null = null;
-let pendingFetch: Promise<CachedResult | null> | null = null;
+const pendingFetches = new Map<string, Promise<CachedResult | null>>();
 
 export type { MilitaryBaseCluster };
 
@@ -64,9 +64,10 @@ export async function fetchMilitaryBases(
     return lastResult;
   }
 
-  if (pendingFetch) return pendingFetch;
+  const pending = pendingFetches.get(cacheKey);
+  if (pending) return pending;
 
-  pendingFetch = (async () => {
+  const pendingFetch = (async () => {
     try {
       const resp: ListMilitaryBasesResponse = await client.listMilitaryBases({
         swLat, swLon, neLat, neLon,
@@ -88,11 +89,12 @@ export async function fetchMilitaryBases(
       return result;
     } catch (err) {
       console.error('[bases-svc] error', err);
-      return lastResult;
+      return null;
     } finally {
-      pendingFetch = null;
+      pendingFetches.delete(cacheKey);
     }
   })();
 
+  pendingFetches.set(cacheKey, pendingFetch);
   return pendingFetch;
 }

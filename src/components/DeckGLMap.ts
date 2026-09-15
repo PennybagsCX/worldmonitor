@@ -617,6 +617,7 @@ export class DeckGLMap {
   private serverBases: MilitaryBaseEnriched[] = [];
   private serverBaseClusters: ServerBaseCluster[] = [];
   private serverBasesLoaded = false;
+  private serverBasesFetchSeq = 0;
   private baseConfigLoadPending = false;
   private naturalEvents: NaturalEvent[] = [];
   private firmsFireData: Array<{ lat: number; lon: number; brightness: number; frp: number; confidence: number; region: string; acq_date: string; daynight: string }> = [];
@@ -7069,6 +7070,11 @@ export class DeckGLMap {
   }
 
   private fetchServerBases(): void {
+    const fetchSeq = ++this.serverBasesFetchSeq;
+    this.serverBases = [];
+    this.serverBaseClusters = [];
+    this.serverBasesLoaded = false;
+    this.render();
     if (!this.maplibreMap) return;
     const mapLayers = this.state.layers;
     if (!mapLayers.bases) return;
@@ -7078,7 +7084,13 @@ export class DeckGLMap {
     const sw = bounds.getSouthWest();
     const ne = bounds.getNorthEast();
     fetchMilitaryBases(sw.lat, sw.lng, ne.lat, ne.lng, zoom).then((result) => {
-      if (!result) return;
+      if (!result || this.destroyed || fetchSeq !== this.serverBasesFetchSeq || !this.maplibreMap || !this.state.layers.bases) return;
+      const currentBounds = this.maplibreMap.getBounds();
+      const currentSw = currentBounds.getSouthWest();
+      const currentNe = currentBounds.getNorthEast();
+      if (this.maplibreMap.getZoom() !== zoom
+        || currentSw.lat !== sw.lat || currentSw.lng !== sw.lng
+        || currentNe.lat !== ne.lat || currentNe.lng !== ne.lng) return;
       this.serverBases = result.bases;
       this.serverBaseClusters = result.clusters;
       this.serverBasesLoaded = true;
