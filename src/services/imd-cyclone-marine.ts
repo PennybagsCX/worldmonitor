@@ -45,6 +45,10 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function nonBlank(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
 function number(value: unknown, min = 0, max = Infinity): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max;
 }
@@ -90,14 +94,15 @@ function items<T>(value: unknown, mapper: (raw: Record<string, unknown>) => T | 
 function mapAlert(raw: Record<string, unknown>): WeatherAlert | undefined {
   const onset = date(raw.onset);
   const expires = date(raw.expires);
-  if (!['id', 'event', 'headline', 'description', 'areaDesc'].every((key) => typeof raw[key] === 'string')
+  if (!nonBlank(raw.id) || !nonBlank(raw.event) || !nonBlank(raw.headline)
+    || typeof raw.description !== 'string' || typeof raw.areaDesc !== 'string'
     || !onset || !expires || expires < onset
     || !Array.isArray(raw.coordinates) || !raw.coordinates.every(coordinate)
     || (raw.centroid !== undefined && !coordinate(raw.centroid))) return undefined;
   const severity = raw.severity;
   return {
-    id: raw.id as string, event: raw.event as string, headline: raw.headline as string,
-    description: raw.description as string, areaDesc: raw.areaDesc as string,
+    id: raw.id, event: raw.event, headline: raw.headline,
+    description: raw.description, areaDesc: raw.areaDesc,
     onset, expires, coordinates: raw.coordinates,
     severity: severity === 'Extreme' || severity === 'Severe' || severity === 'Moderate' || severity === 'Minor' ? severity : 'Unknown',
     ...(coordinate(raw.centroid) ? { centroid: raw.centroid } : {}),
@@ -109,7 +114,7 @@ function mapAlert(raw: Record<string, unknown>): WeatherAlert | undefined {
 
 function mapCyclone(raw: Record<string, unknown>): NaturalEvent | undefined {
   const observed = date(raw.date);
-  if (typeof raw.id !== 'string' || typeof raw.title !== 'string' || !position(raw) || !observed) return undefined;
+  if (!nonBlank(raw.id) || !nonBlank(raw.title) || !position(raw) || !observed) return undefined;
   return {
     id: raw.id, title: raw.title, lat: raw.lat, lon: raw.lon, date: observed,
     category: 'severeStorms', categoryTitle: typeof raw.categoryTitle === 'string' ? raw.categoryTitle : 'Tropical Cyclone',

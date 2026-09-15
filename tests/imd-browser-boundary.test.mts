@@ -108,3 +108,14 @@ test('unavailable or disabled snapshots do not become available because some rec
   await app.fetchImdCycloneMarine();
   assert.equal(calls, 2);
 });
+
+
+test('blank identity/display fields are rejected while empty bulletin details remain valid', () => {
+  for (const key of ['id', 'title']) {
+    assert.equal(app.mapImdSnapshot({ ...snapshot(), cycloneEvents: [{ ...event, [key]: '  ' }] }).cycloneEvents.length, 0);
+  }
+  for (const key of ['id', 'event', 'headline']) {
+    assert.equal(app.mapImdSnapshot({ ...snapshot(), portAlerts: [{ ...alert, [key]: '' }] }).portAlerts.length, 0);
+  }
+  assert.equal(app.mapImdSnapshot({ ...snapshot(), portAlerts: [{ ...alert, description: '', areaDesc: '' }] }).portAlerts.length, 1);
+});
