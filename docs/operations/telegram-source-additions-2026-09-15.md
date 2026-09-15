@@ -1,6 +1,6 @@
 # Validated Telegram additions — 15 September 2026
 
-Six channels are added to the full-variant curated ingestion list. Public trust
+The channels below are added to the full-variant curated ingestion list. Public trust
 is based on the publisher and its remit. The configuration's operational tier
 controls polling priority and is distinct from the public editorial tier.
 
