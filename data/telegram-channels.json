@@ -16,7 +16,7 @@
       {
         "handle": "InaTEWS_BMKG",
         "label": "BMKG InaTEWS",
-        "topic": "disaster",
+        "topic": "breaking",
         "tier": 1,
         "enabled": true,
         "region": "indonesia",
@@ -25,7 +25,7 @@
       {
         "handle": "dsns_telegram",
         "label": "Ukraine State Emergency Service",
-        "topic": "disaster",
+        "topic": "breaking",
         "tier": 1,
         "enabled": true,
         "region": "ukraine",
