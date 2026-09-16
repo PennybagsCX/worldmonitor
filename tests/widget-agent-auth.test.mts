@@ -105,13 +105,27 @@ describe('widget-agent unified tester key auth', () => {
     });
   });
 
+  it('rejects retired domain cookie names before invoking the paid relay', async () => {
+    const res = await handler(new Request('https://api.worldmonitor.app/api/widget-agent', {
+      method: 'POST',
+      headers: {
+        Origin: 'https://worldmonitor.app',
+        'Content-Type': 'application/json',
+        Cookie: 'wm-widget-key=server-widget-key; wm-pro-key=browser-test-key',
+      },
+      body: JSON.stringify({ prompt: 'Build a widget', mode: 'create', tier: 'basic' }),
+    }));
+    assert.equal(res.status, 403);
+    assert.equal(fetchMock.mock.calls.length, 0);
+  });
+
   it('accepts HttpOnly legacy tester key cookies without JS-readable auth headers', async () => {
     const res = await handler(new Request('https://www.worldmonitor.app/api/widget-agent', {
       method: 'POST',
       headers: {
         Origin: 'https://www.worldmonitor.app',
         'Content-Type': 'application/json',
-        Cookie: `wm-widget-key=${encodeURIComponent('server-widget-key')}; wm-pro-key=${encodeURIComponent('server-pro-key')}`,
+        Cookie: `__Host-wm-widget-key=${encodeURIComponent('server-widget-key')}; __Host-wm-pro-key=${encodeURIComponent('server-pro-key')}`,
       },
       body: JSON.stringify({ prompt: 'Build a widget', mode: 'create', tier: 'basic' }),
     }));
@@ -138,7 +152,7 @@ describe('widget-agent unified tester key auth', () => {
         Origin: 'https://www.worldmonitor.app',
         'Content-Type': 'application/json',
         'X-WorldMonitor-Key': 'wms_automatic-anonymous-session',
-        Cookie: `wm-pro-key=${encodeURIComponent('browser-test-key')}`,
+        Cookie: `__Host-wm-pro-key=${encodeURIComponent('browser-test-key')}`,
       },
       body: JSON.stringify({ prompt: 'Build a widget', mode: 'create', tier: 'basic' }),
     }));
@@ -162,7 +176,7 @@ describe('widget-agent unified tester key auth', () => {
       headers: {
         Origin: 'https://evil.example.com',
         'Content-Type': 'application/json',
-        Cookie: `wm-widget-key=${encodeURIComponent('server-widget-key')}; wm-pro-key=${encodeURIComponent('server-pro-key')}`,
+        Cookie: `__Host-wm-widget-key=${encodeURIComponent('server-widget-key')}; __Host-wm-pro-key=${encodeURIComponent('server-pro-key')}`,
       },
       body: JSON.stringify({ prompt: 'Build a widget', mode: 'create', tier: 'basic' }),
     }));

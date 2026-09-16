@@ -72,7 +72,7 @@ async function loadWidgetStore(): Promise<WidgetStore> {
       export function getEntitlementState() { return { planKey: 'pro' }; }
     `],
     ['browser-key-session-stub', `
-      export function clearLegacyKeyStorage() {}
+      export function clearBrowserKeySession() { return Promise.resolve(true); }
       export function migrateLegacyKeysToHttpOnlySession() { return Promise.resolve(); }
       export function readLegacySessionKey() { return ''; }
     `],

@@ -187,8 +187,8 @@ async function proxyWidgetAgent(
     : headerWorldMonitorKey;
   const worldMonitorKey =
     explicitWorldMonitorKey ||
-    getCookie(req, 'wm-pro-key') ||
-    getCookie(req, 'wm-widget-key') ||
+    getCookie(req, '__Host-wm-pro-key') ||
+    getCookie(req, '__Host-wm-widget-key') ||
     headerWorldMonitorKey;
   if (await hasValidWorldMonitorKey(worldMonitorKey)) {
     isPro = true;
@@ -270,8 +270,8 @@ async function proxyWidgetAgent(
       isPro = true;
     } else {
       // Legacy tester key path (wm-widget-key / wm-pro-key)
-      const widgetKey = req.headers.get('X-Widget-Key') || getCookie(req, 'wm-widget-key');
-      const proKey = req.headers.get('X-Pro-Key') || getCookie(req, 'wm-pro-key');
+      const widgetKey = req.headers.get('X-Widget-Key') || getCookie(req, '__Host-wm-widget-key');
+      const proKey = req.headers.get('X-Pro-Key') || getCookie(req, '__Host-wm-pro-key');
       const hasWidgetKey = await timingSafeEqualSecret(widgetKey, WIDGET_AGENT_KEY);
       const hasProKey = await timingSafeEqualSecret(proKey, PRO_WIDGET_KEY);
       if (!hasWidgetKey && !hasProKey) {

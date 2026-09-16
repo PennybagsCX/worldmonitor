@@ -99,7 +99,7 @@ export async function validateApiKey(req, options = {}) {
   const forceKey = options.forceKey === true;
   const headerKey = getHeaderApiKey(req);
   const sessionCookie = getCookie(req, 'wm-session');
-  const testerCookie = getCookie(req, 'wm-pro-key') || getCookie(req, 'wm-widget-key');
+  const testerCookie = getCookie(req, '__Host-wm-pro-key') || getCookie(req, '__Host-wm-widget-key');
   const origin = req.headers.get('Origin') || '';
 
   // Desktop app — always require an enterprise key.
