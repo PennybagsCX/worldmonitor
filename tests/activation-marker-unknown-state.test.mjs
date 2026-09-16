@@ -632,11 +632,14 @@ describe('#6152 review — the verdict cache cannot outlive the deadline it publ
     globalThis.fetch = async (url, init) => {
       for (const command of JSON.parse(init.body)) {
         if (command[0] === 'EVAL' && command[1] === __testing__.HEALTH_VERDICT_WRITE_SNAPSHOT_SCRIPT) {
-          assert.equal(command[2], '2');
+          assert.equal(command[2], '3');
           assert.equal(command[3], __testing__.HEALTH_VERDICT_REFRESH_LOCK_KEY);
           // Inspect the logical SET protected by this script, excluding the
           // refresh lock's independent expiry. Keep the TTL assertions below.
-          sets.push(['SET', command[4], command[6], 'EX', command[7]]);
+          sets.push(
+            ['SET', command[4], command[7], 'EX', command[9]],
+            ['SET', command[5], command[8], 'EX', command[9]],
+          );
         }
       }
       return inner(url, init);

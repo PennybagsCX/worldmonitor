@@ -396,7 +396,7 @@ describe('health sweep classifies the temporal producer keys into the preview na
 
     const snapshotWriteKeys = pipelineBodies.flat()
       .filter((command) => command[0] === 'EVAL' && command[1] === __testing__.HEALTH_VERDICT_WRITE_SNAPSHOT_SCRIPT)
-      .map((command) => command[4]);
+      .flatMap((command) => command.slice(4, 6));
     assert.deepEqual(snapshotWriteKeys.sort(), [
       `${PREFIX}health:verdict:v2`,
       `${PREFIX}health:verdict:compact:v2`,

@@ -216,11 +216,25 @@ const HEALTH_VERDICT_RELEASE_LOCK_SCRIPT = [
 // Fence publication as well as release: a paused owner can resume after its
 // lease expired and a successor already published a newer verdict.
 const HEALTH_VERDICT_WRITE_SNAPSHOT_SCRIPT = [
-  "if redis.call('get', KEYS[1]) == ARGV[1] then",
-  "  return redis.call('set', KEYS[2], ARGV[2], 'EX', ARGV[3])",
-  'end',
-  'return nil',
+  "if redis.call('get', KEYS[1]) ~= ARGV[1] then return nil end",
+  "redis.call('set', KEYS[2], ARGV[2], 'EX', ARGV[4])",
+  "redis.call('set', KEYS[3], ARGV[3], 'EX', ARGV[4])",
+  "return 'OK'",
 ].join('\n');
+
+const HEALTH_VERDICT_MUTATION_SCRIPT = [
+  "if redis.call('get', KEYS[1]) ~= ARGV[1] then return nil end",
+  "return redis.call(ARGV[2], KEYS[2], unpack(ARGV, 3))",
+].join('\n');
+const HEALTH_REFRESH_MUTATIONS = new Set(['SET', 'DEL', 'HSETNX', 'HDEL', 'PEXPIRE', 'LPUSH', 'LTRIM', 'EXPIRE']);
+
+// All callers provide final keys: seeder-owned rollout state stays raw while
+// route-owned grace/history keys carry this deployment's prefix exactly once.
+function fenceHealthMutations(commands, token) {
+  return commands.map(([op, key, ...args]) => HEALTH_REFRESH_MUTATIONS.has(op)
+    ? ['EVAL', HEALTH_VERDICT_MUTATION_SCRIPT, '2', HEALTH_VERDICT_REFRESH_LOCK_KEY, key, token, op, ...args]
+    : [op, key, ...args]);
+}
 
 // Iran-events domain sunset (war ended 2026-07). Default OFF everywhere; set
 // IRAN_EVENTS_ENABLED=true to restore the whole domain. Mirrors the backend
@@ -1866,7 +1880,7 @@ function staleContentGraceCandidateUntil(evidence, now) {
  * `claimCommands` must be awaited: their HGET replies decide what deadline (if
  * any) this response publishes. `cleanupCommands` only reap state for sources
  * that have recovered, so nothing in this response depends on them and they are
- * dispatched fire-and-forget rather than charged to request latency.
+ * awaited before releasing the refresh lease so recovery cannot lose its cleanup.
  *
  * Claims are gated on the CLASSIFIED status, not on content evidence alone.
  * Several classifier branches (REDIS_PARTIAL, EMPTY, SEED_ERROR, STALE_SEED,
@@ -4109,7 +4123,7 @@ export async function handleHealth(req, ctx, options = {}) {
       ...fredRolloutCommands,
     ];
     if (!getRedisCredentials()) throw new Error('Redis not configured');
-    results = await redisPipeline(commands, 8_000, true);
+    results = await redisPipeline(fenceHealthMutations(commands, refreshLockToken), 8_000, true);
     if (!results) throw new Error('Redis request failed');
   } catch (err) {
     if (ownsSnapshotRefreshLock) await releaseHealthVerdictRefreshLock(refreshLockToken);
@@ -4281,8 +4295,8 @@ export async function handleHealth(req, ctx, options = {}) {
 
   // Now that every key has a status, claim (or read back) the one durable
   // deadline per STALE_CONTENT source and publish it. Only the claim half is
-  // awaited — the recovery cleanup is bookkeeping no reader of this response
-  // depends on, so it must not sit in the request path.
+  // used to classify this response. Cleanup and history also finish before
+  // release; a token check at each mutation rejects an expired owner.
   const graceStatePlan = staleContentGraceStatePlan(graceEvidenceByName, checks, evaluationNow);
   if (graceStatePlan.claimCommands.length > 0) {
     // `redisPipeline` resolves null rather than throwing on every failure shape
@@ -4292,7 +4306,7 @@ export async function handleHealth(req, ctx, options = {}) {
     // warning", which is the fail-closed direction.
     // The grace state hash key is deployment-prefixed via
     // healthVerdictRedisKey — send the plan verbatim (#7674).
-    const graceResults = await redisPipeline(graceStatePlan.claimCommands, 4_000, true).catch(() => null);
+    const graceResults = await redisPipeline(fenceHealthMutations(graceStatePlan.claimCommands, refreshLockToken), 4_000, true).catch(() => null);
     applyStaleContentGrace(
       checks,
       graceEvidenceByName,
@@ -4301,8 +4315,7 @@ export async function handleHealth(req, ctx, options = {}) {
     );
   }
   if (graceStatePlan.cleanupCommands.length > 0) {
-    const graceCleanup = redisPipeline(graceStatePlan.cleanupCommands, 4_000, true).catch(() => {});
-    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(graceCleanup);
+    await redisPipeline(fenceHealthMutations(graceStatePlan.cleanupCommands, refreshLockToken), 4_000, true).catch(() => {});
   }
 
   for (const [name, entry] of Object.entries(checks)) {
@@ -4353,10 +4366,10 @@ export async function handleHealth(req, ctx, options = {}) {
       previousSignature,
       now: evaluationNow,
     });
-    await redisPipeline(persistencePlan.commands, 4_000).catch(() => {});
+    const commands = persistencePlan.commands.map(([op, key, ...args]) => [op, applyRedisKeyPrefix(key), ...args]);
+    await redisPipeline(fenceHealthMutations(commands, refreshLockToken), 4_000, true).catch(() => {});
   };
-  if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(persistFailureLog());
-  else await persistFailureLog();
+  await persistFailureLog();
 
   const verdictSnapshot = {
     status: overall,
@@ -4395,38 +4408,29 @@ export async function handleHealth(req, ctx, options = {}) {
   // Await the write so the next request cannot race an unstarted background
   // SET and repeat the full sweep. A write failure does not invalidate the
   // live verdict just computed; the next request will retry by sweeping.
-  // Both snapshots are written by the SAME sweep, in one pipeline, so the compact
+  // Both snapshots are written by the SAME sweep, in one atomic script, so the compact
   // form can never disagree with the full one or outlive it.
   // Both keys share one TTL for the same reason they share one sweep: they
   // carry the same deadlines, so they must stop being servable together.
   const snapshotTtl = String(snapshotTtlSeconds(verdictSnapshot, snapshotNow()));
   // Both snapshot keys are deployment-prefixed via healthVerdictRedisKey —
   // write them verbatim (#7674).
-  const snapshotWriteResult = await redisPipeline([
-    [
-      'EVAL',
-      HEALTH_VERDICT_WRITE_SNAPSHOT_SCRIPT,
-      '2',
-      HEALTH_VERDICT_REFRESH_LOCK_KEY,
-      HEALTH_VERDICT_SNAPSHOT_KEY,
-      refreshLockToken,
-      JSON.stringify(verdictSnapshot),
-      snapshotTtl,
-    ],
-    [
-      'EVAL',
-      HEALTH_VERDICT_WRITE_SNAPSHOT_SCRIPT,
-      '2',
-      HEALTH_VERDICT_REFRESH_LOCK_KEY,
-      HEALTH_VERDICT_COMPACT_SNAPSHOT_KEY,
-      refreshLockToken,
-      JSON.stringify(buildCompactVerdictSnapshot(verdictSnapshot)),
-      snapshotTtl,
-    ],
-  ], 4_000, true).catch(() => null);
+  const snapshotWriteResult = await redisPipeline([[
+    'EVAL',
+    HEALTH_VERDICT_WRITE_SNAPSHOT_SCRIPT,
+    '3',
+    HEALTH_VERDICT_REFRESH_LOCK_KEY,
+    HEALTH_VERDICT_SNAPSHOT_KEY,
+    HEALTH_VERDICT_COMPACT_SNAPSHOT_KEY,
+    refreshLockToken,
+    JSON.stringify(verdictSnapshot),
+    JSON.stringify(buildCompactVerdictSnapshot(verdictSnapshot)),
+    snapshotTtl,
+  ]], 4_000, true).catch(() => null);
   const snapshotWriteFailed = !snapshotWriteResult
-    || snapshotWriteResult.length !== 2
-    || snapshotWriteResult.some((entry) => entry?.error || entry?.result !== 'OK');
+    || snapshotWriteResult.length !== 1
+    || snapshotWriteResult[0]?.error
+    || snapshotWriteResult[0]?.result !== 'OK';
   if (ownsSnapshotRefreshLock) await releaseHealthVerdictRefreshLock(refreshLockToken);
   // A failed cache write does not invalidate the live verdict. Releasing only
   // this request's token lets the next caller retry immediately without ever
@@ -4503,7 +4507,9 @@ export const __testing__ = {
   HEALTH_VERDICT_REFRESH_LOCK_KEY,
   HEALTH_VERDICT_REFRESH_WAIT_MS,
   HEALTH_VERDICT_WRITE_SNAPSHOT_SCRIPT,
+  HEALTH_VERDICT_MUTATION_SCRIPT,
   HEALTH_VERDICT_RELEASE_LOCK_SCRIPT,
+  fenceHealthMutations,
   CHINA_COVERAGE_SUMMARY_KEY,
   CHINA_DECISION_SIGNALS_PENDING_MS,
   projectChinaCoverageStatus,

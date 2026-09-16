@@ -1,3 +1,4 @@
+import { decodeHealthPipeline } from './helpers/health-pipeline-fixture.mjs';
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -31,14 +32,6 @@ afterEach(() => {
   Date.now = realDateNow;
 });
 
-// Existing verdict tests inspect the logical SETs. Lease fencing itself is
-// exercised by the stateful concurrency fixture in health-refresh-lease.test.mjs.
-function snapshotCommands(body) {
-  return JSON.parse(body).map((command) => command[0] === 'EVAL'
-    && command[1] === __testing__.HEALTH_VERDICT_WRITE_SNAPSHOT_SCRIPT
-    ? ['SET', command[4], command[6], 'EX', command[7]]
-    : command);
-}
 
 function healthySnapshot(checkedAt = new Date().toISOString()) {
   return {
@@ -75,7 +68,7 @@ test('one sweep serves both callers, each from its own snapshot', async () => {
   const pipelineCalls = [];
 
   globalThis.fetch = async (_url, init) => {
-    const commands = snapshotCommands(init.body);
+    const { commands, encodeResults } = decodeHealthPipeline(init.body);
     pipelineCalls.push(commands);
 
     const results = commands.map(([op, key, value]) => {
@@ -95,7 +88,7 @@ test('one sweep serves both callers, each from its own snapshot', async () => {
       return { result: 'OK' };
     });
 
-    return new Response(JSON.stringify(results), { status: 200 });
+    return new Response(JSON.stringify(encodeResults(results)), { status: 200 });
   };
 
   const compactResponse = await handler(
@@ -181,7 +174,7 @@ test('coalesces concurrent cache misses into one full sweep', async () => {
   const pipelineCalls = [];
 
   globalThis.fetch = async (_url, init) => {
-    const commands = snapshotCommands(init.body);
+    const { commands, encodeResults } = decodeHealthPipeline(init.body);
     pipelineCalls.push(commands);
 
     if (commands.some(([op]) => op === 'STRLEN' || op === 'LLEN')) {
@@ -210,7 +203,7 @@ test('coalesces concurrent cache misses into one full sweep', async () => {
       return { result: 'OK' };
     });
 
-    return new Response(JSON.stringify(results), { status: 200 });
+    return new Response(JSON.stringify(encodeResults(results)), { status: 200 });
   };
 
   const [first, second] = await Promise.all([
@@ -241,7 +234,7 @@ test('serves HEALTHY with contained problems from a cached compact snapshot', as
   // caller must therefore read the compact key, and must never touch the full one.
   const compactSnapshot = buildCompactVerdictSnapshot(snapshot);
   globalThis.fetch = async (_url, init) => {
-    const commands = snapshotCommands(init.body);
+    const { commands, encodeResults } = decodeHealthPipeline(init.body);
     assert.deepEqual(commands, [['GET', HEALTH_COMPACT_SNAPSHOT_KEY]],
       'a ?compact=1 caller must read the compact snapshot, never the full check map');
     return new Response(JSON.stringify([{ result: JSON.stringify(compactSnapshot) }]), { status: 200 });
@@ -270,7 +263,7 @@ test('takes over refresh after the prior lock owner disappears', async () => {
     return 0;
   };
   globalThis.fetch = async (_url, init) => {
-    const commands = snapshotCommands(init.body);
+    const { commands, encodeResults } = decodeHealthPipeline(init.body);
     if (commands.some(([op]) => op === 'STRLEN' || op === 'LLEN')) sweepCount++;
     const results = commands.map(([op, key]) => {
       if (op === 'GET' && key === HEALTH_SNAPSHOT_KEY) return { result: null };
@@ -284,7 +277,7 @@ test('takes over refresh after the prior lock owner disappears', async () => {
       if (op === 'EXISTS') return { result: 0 };
       return { result: 'OK' };
     });
-    return new Response(JSON.stringify(results), { status: 200 });
+    return new Response(JSON.stringify(encodeResults(results)), { status: 200 });
   };
 
   const response = await handler(new Request('https://api.worldmonitor.app/api/health?compact=1'));
@@ -301,7 +294,7 @@ test('does not report REDIS_DOWN when a healthy Redis lock stays contended', asy
     return 0;
   };
   globalThis.fetch = async (_url, init) => {
-    const commands = snapshotCommands(init.body);
+    const { commands, encodeResults } = decodeHealthPipeline(init.body);
     if (commands.some(([op]) => op === 'STRLEN' || op === 'LLEN')) sweepCount++;
     const results = commands.map(([op, key]) => {
       if (op === 'GET' && key === HEALTH_SNAPSHOT_KEY) return { result: null };
@@ -312,7 +305,7 @@ test('does not report REDIS_DOWN when a healthy Redis lock stays contended', asy
       if (op === 'EXISTS') return { result: 0 };
       return { result: 'OK' };
     });
-    return new Response(JSON.stringify(results), { status: 200 });
+    return new Response(JSON.stringify(encodeResults(results)), { status: 200 });
   };
 
   const response = await handler(new Request('https://api.worldmonitor.app/api/health?compact=1'));
@@ -337,7 +330,7 @@ test('does not start a doomed Redis request at the contention deadline', async (
     return 0;
   };
   globalThis.fetch = async (_url, init) => {
-    const commands = snapshotCommands(init.body);
+    const { commands, encodeResults } = decodeHealthPipeline(init.body);
     if (commands.some(([op]) => op === 'STRLEN' || op === 'LLEN')) sweepCount++;
     if (commands.length === 1 && commands[0][0] === 'GET' && (commands[0][1] === HEALTH_SNAPSHOT_KEY || commands[0][1] === HEALTH_COMPACT_SNAPSHOT_KEY)) {
       snapshotReads++;
@@ -354,7 +347,7 @@ test('does not start a doomed Redis request at the contention deadline', async (
       if (op === 'EXISTS') return { result: 0 };
       return { result: 'OK' };
     });
-    return new Response(JSON.stringify(results), { status: 200 });
+    return new Response(JSON.stringify(encodeResults(results)), { status: 200 });
   };
 
   const response = await handler(new Request('https://api.worldmonitor.app/api/health?compact=1'));
@@ -377,7 +370,7 @@ test('releases its refresh lock when snapshot persistence fails', async () => {
   let snapshotWriteAttempts = 0;
   let sweepCount = 0;
   globalThis.fetch = async (_url, init) => {
-    const commands = snapshotCommands(init.body);
+    const { commands, encodeResults } = decodeHealthPipeline(init.body);
     if (commands.some(([op]) => op === 'STRLEN' || op === 'LLEN')) sweepCount++;
 
     // A sweep persists BOTH snapshots in one pipeline (#5300), so a failed
@@ -413,7 +406,7 @@ test('releases its refresh lock when snapshot persistence fails', async () => {
       if (op === 'EXISTS') return { result: 0 };
       return { result: 'OK' };
     });
-    return new Response(JSON.stringify(results), { status: 200 });
+    return new Response(JSON.stringify(encodeResults(results)), { status: 200 });
   };
 
   const first = await handler(new Request('https://api.worldmonitor.app/api/health?compact=1'));
@@ -431,7 +424,7 @@ test('validates snapshot age after the Redis read completes', async () => {
   let sweepCount = 0;
   Date.now = () => fakeNow;
   globalThis.fetch = async (_url, init) => {
-    const commands = snapshotCommands(init.body);
+    const { commands, encodeResults } = decodeHealthPipeline(init.body);
     if (commands.length === 1 && commands[0][0] === 'GET' && commands[0][1] === HEALTH_SNAPSHOT_KEY) {
       fakeNow += 2_000;
       return new Response(JSON.stringify([{ result: JSON.stringify(almostExpired) }]), { status: 200 });
@@ -444,7 +437,7 @@ test('validates snapshot age after the Redis read completes', async () => {
       if (op === 'EXISTS') return { result: 0 };
       return { result: 'OK' };
     });
-    return new Response(JSON.stringify(results), { status: 200 });
+    return new Response(JSON.stringify(encodeResults(results)), { status: 200 });
   };
 
   const response = await handler(new Request('https://api.worldmonitor.app/api/health?compact=1'));
@@ -481,7 +474,7 @@ test('serves the auditable content-freshness deadline from full and compact snap
     ['', HEALTH_SNAPSHOT_KEY, { 'x-worldmonitor-key': 'test-health-admin-key' }],
   ]) {
     globalThis.fetch = async (_url, init) => {
-      assert.deepEqual(snapshotCommands(init.body), [['GET', key]]);
+      assert.deepEqual(decodeHealthPipeline(init.body).commands, [['GET', key]]);
       return new Response(JSON.stringify([{ result: JSON.stringify(
         query === '?compact=1' ? buildCompactVerdictSnapshot(snapshot) : snapshot,
       ) }]), { status: 200 });
@@ -526,7 +519,7 @@ test('does not serve a full or compact snapshot after content-freshness grace ex
   ]) {
     const calls = [];
     globalThis.fetch = async (_url, init) => {
-      const commands = snapshotCommands(init.body);
+      const { commands, encodeResults } = decodeHealthPipeline(init.body);
       calls.push(commands);
       if (commands.length === 1 && commands[0][0] === 'GET' && commands[0][1] === key) {
         const value = query === '?compact=1' ? buildCompactVerdictSnapshot(snapshot) : snapshot;
@@ -678,7 +671,7 @@ function sweepFetch({
   chinaDecisionMeta,
 } = {}) {
   return async (_url, init) => {
-    const commands = snapshotCommands(init.body);
+    const { commands, encodeResults } = decodeHealthPipeline(init.body);
     onCommands(commands);
 
     if (failGraceClaim && commands.some(([op]) => op === 'HSETNX')) {
@@ -721,7 +714,7 @@ function sweepFetch({
       }
       return { result: 'OK' };
     });
-    return new Response(JSON.stringify(results), { status: 200 });
+    return new Response(JSON.stringify(encodeResults(results)), { status: 200 });
   };
 }
 
@@ -1051,7 +1044,7 @@ test('handleHealth serves a graced snapshot until its deadline, then sweeps agai
 
   let sweeps = 0;
   globalThis.fetch = async (_url, init) => {
-    const commands = snapshotCommands(init.body);
+    const { commands, encodeResults } = decodeHealthPipeline(init.body);
     if (commands.some(([op]) => op === 'STRLEN' || op === 'LLEN')) sweeps++;
     if (commands.length === 1 && commands[0][0] === 'GET' && commands[0][1] === HEALTH_COMPACT_SNAPSHOT_KEY) {
       return new Response(JSON.stringify([{ result: JSON.stringify(graced) }]), { status: 200 });
