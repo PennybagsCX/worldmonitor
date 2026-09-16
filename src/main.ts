@@ -328,7 +328,7 @@ function shouldSuppressCspViolation(
   if (directive === 'form-action') {
     try {
       const url = new URL(blockedURI);
-      if (url.protocol === 'https:' && url.hostname === 'www.facebook.com' && /^\/tr\/?$/.test(url.pathname)) return true;
+      if (url.protocol === 'https:' && url.host === 'www.facebook.com' && /^\/tr\/?$/.test(url.pathname)) return true;
     } catch { /* scheme-only values fall through */ }
   }
   // ---- font-src: one invariant, not a host list.

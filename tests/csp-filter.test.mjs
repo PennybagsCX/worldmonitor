@@ -491,10 +491,13 @@ describe('CSP violation filter (shouldSuppressCspViolation)', () => {
       // api.worldmonitor.app, and no first-party code submits to Meta.
       assert.ok(suppress('enforce', 'form-action', 'https://www.facebook.com/tr/', '', false));
       assert.ok(suppress('enforce', 'form-action', 'https://www.facebook.com/tr', '', false));
+      assert.ok(suppress('enforce', 'form-action', 'https://www.facebook.com:443/tr/', '', false));
     });
 
     it('does NOT suppress other facebook.com form posts or /tr under other directives', () => {
       assert.ok(!suppress('enforce', 'form-action', 'https://www.facebook.com/login.php', '', false));
+      assert.ok(!suppress('enforce', 'form-action', 'https://www.facebook.com:8443/tr/', '', false));
+      assert.ok(!suppress('enforce', 'form-action', 'http://www.facebook.com/tr/', '', false));
       assert.ok(!suppress('enforce', 'form-action', 'https://www.facebook.com.evil.example/tr/', '', false));
       assert.ok(!suppress('enforce', 'frame-src', 'https://www.facebook.com/tr/', '', false));
     });

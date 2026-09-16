@@ -1354,6 +1354,14 @@ describe('marketing ignoreErrors — injected-script classes (2026-09-02 triage)
   });
 
   it('keeps other NotSupportedError messages so a real one still reports', () => {
+    for (const prefix of ['', 'Error: ']) {
+      for (const suffix of ['\n', '\r', '\r\n', '\u2028', '\u2029']) {
+        assert.equal(
+          isIgnored('Error', `${prefix}NotSupportedError: Error connecting to Web Authentication service.${suffix}`),
+          false,
+        );
+      }
+    }
     assert.equal(isIgnored('Error', 'NotSupportedError: The operation is not supported.'), false);
     assert.equal(
       isIgnored('Error', 'NotSupportedError: Error connecting to Web Authentication service. Retrying checkout'),
