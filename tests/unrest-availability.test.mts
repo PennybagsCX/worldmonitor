@@ -14,7 +14,7 @@ test('unrest client retains last-good on unavailable seed and accepts confirmed 
   const env={...process.env};t.after(()=>{process.env=env});
   process.env.UPSTASH_REDIS_REST_URL='https://redis.fixture';process.env.UPSTASH_REDIS_REST_TOKEN='fixture';delete process.env.LOCAL_API_MODE;
   let now=Date.now();t.mock.method(Date,'now',()=>now);t.mock.method(console,'warn',()=>{});t.mock.method(console,'error',()=>{});
-  const good={events:[{id:'fixture',title:'Test protest',country:'US',eventType:'UNREST_EVENT_TYPE_PROTEST',sourceType:'UNREST_SOURCE_TYPE_ACLED',severity:'SEVERITY_LEVEL_LOW',occurredAt:1,location:{latitude:1,longitude:2},fatalities:0,sources:[],sourceUrls:[],tags:[],actors:[],confidence:'CONFIDENCE_LEVEL_HIGH'}]};
+  const good={events:[{id:'fixture',title:'Test protest',summary:'',city:'',country:'US',region:'',eventType:'UNREST_EVENT_TYPE_PROTEST',sourceType:'UNREST_SOURCE_TYPE_ACLED',severity:'SEVERITY_LEVEL_LOW',occurredAt:1,location:{latitude:1,longitude:2},fatalities:0,sources:[],sourceUrls:[],tags:[],actors:[],confidence:'CONFIDENCE_LEVEL_HIGH'}]};
   let payload:unknown=good;let failure=false;const statuses:number[]=[];
   t.mock.method(globalThis,'fetch',async(input:RequestInfo|URL)=>{
     const url=new URL(input instanceof Request?input.url:String(input),'https://app.fixture');
@@ -24,7 +24,7 @@ test('unrest client retains last-good on unavailable seed and accepts confirmed 
   payload=null;await assert.rejects(harness.fetchProtestEvents(),/Unrest events unavailable/);payload=good;
   const initial=await harness.fetchProtestEvents();assert.equal(initial.events.length,1);
   async function refresh(expected:unknown,status:number){now+=10*60*1000+1;await harness.fetchProtestEvents();await new Promise(r=>setImmediate(r));assert.equal(statuses.at(-1),status);assert.deepEqual(await harness.fetchProtestEvents(),expected);await new Promise(r=>setImmediate(r));}
-  for(const bad of [null,{}, {events:null}]){payload=bad;await refresh(initial,503);payload=good;await refresh(initial,200);}
+  for(const bad of [null,{}, {events:null}, {events:[{}]}]){payload=bad;await refresh(initial,503);payload=good;await refresh(initial,200);}
   failure=true;await refresh(initial,503);failure=false;payload={events:[]};await refresh({...initial,events:[],byCountry:new Map(),sources:{acled:0,gdelt:0}},200);
   failure=true;await refresh({...initial,events:[],byCountry:new Map(),sources:{acled:0,gdelt:0}},503);failure=false;payload=good;await refresh(initial,200);
 });
