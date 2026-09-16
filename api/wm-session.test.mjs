@@ -737,7 +737,7 @@ test('vendor origins cannot mint a session even with a valid privileged cookie',
   for (const origin of ['https://clerk.worldmonitor.app', 'https://abacus.worldmonitor.app']) {
     const response = await handler(new Request('https://api.worldmonitor.app/api/wm-session', {
       method: 'POST',
-      headers: { origin, cookie: 'wm-pro-key=enterprise-secret' },
+      headers: { origin, cookie: '__Host-wm-pro-key=enterprise-secret' },
     }));
     assert.equal(response.status, 403, origin);
     assert.equal(setCookies(response).length, 0);
