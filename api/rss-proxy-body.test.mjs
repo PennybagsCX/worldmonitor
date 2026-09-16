@@ -216,4 +216,3 @@ test('cancels an unused redirect body before rejecting its forbidden destination
   assert.equal(canceled, true);
   assert.equal(calls.length, 1);
 });
-
