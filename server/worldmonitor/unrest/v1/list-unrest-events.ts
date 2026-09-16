@@ -3,15 +3,16 @@
  * All external ACLED/GDELT API calls happen in seed-unrest.mjs on Railway.
  */
 
-import type {
-  ServerContext,
-  ListUnrestEventsRequest,
-  ListUnrestEventsResponse,
-  UnrestEvent,
+import {
+  ApiError,
+  type ServerContext,
+  type ListUnrestEventsRequest,
+  type ListUnrestEventsResponse,
+  type UnrestEvent,
 } from '../../../../src/generated/server/worldmonitor/unrest/v1/service_server';
 
 import { sortBySeverityAndRecency } from './_shared';
-import { getCachedJson } from '../../../_shared/redis';
+import { logCacheReadError, readCachedJson } from '../../../_shared/redis';
 import { resolveCountryCode } from '../../../../shared/country-code-resolve';
 
 const SEED_CACHE_KEY = 'unrest:events:v1';
@@ -38,12 +39,13 @@ export async function listUnrestEvents(
   _ctx: ServerContext,
   req: ListUnrestEventsRequest,
 ): Promise<ListUnrestEventsResponse> {
-  try {
-    const seedData = await getCachedJson(SEED_CACHE_KEY, true) as ListUnrestEventsResponse | null;
-    const filtered = filterSeedEvents(seedData?.events || [], req);
-    const sorted = sortBySeverityAndRecency(filtered);
-    return { events: sorted, clusters: [], pagination: undefined };
-  } catch {
-    return { events: [], clusters: [], pagination: undefined };
+  const cached = await readCachedJson(SEED_CACHE_KEY, true);
+  if (cached.status === 'error') logCacheReadError(SEED_CACHE_KEY, cached.error);
+  const seedData = cached.status === 'hit' ? cached.value as ListUnrestEventsResponse | null : null;
+  if (!seedData || !Array.isArray(seedData.events)) {
+    throw new ApiError(503, 'Unrest events cache unavailable', '');
   }
+  const filtered = filterSeedEvents(seedData.events, req);
+  const sorted = sortBySeverityAndRecency(filtered);
+  return { events: sorted, clusters: [], pagination: undefined };
 }
