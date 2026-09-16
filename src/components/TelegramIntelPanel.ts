@@ -99,6 +99,7 @@ export class TelegramIntelPanel extends Panel {
   private inputEl: HTMLInputElement | null = null;
   private relayEnabled = false;
   private disposed = false;
+  private onAccessGranted: (() => void) | null = null;
   private previewState: PreviewState = { channel: null, error: null, loading: false, username: '' };
   private previewTimer: ReturnType<typeof setTimeout> | null = null;
   private previewRequestId = 0;
@@ -586,13 +587,18 @@ export class TelegramIntelPanel extends Panel {
     super.showGatedCta(reason, onAction);
   }
 
+  public setAccessGrantedHandler(handler: () => void): void {
+    this.onAccessGranted = handler;
+  }
+
   public override unlockPanel(): void {
-    if (isDesktopRuntime() && !hasPremiumAccess()) return;
+    if (this.disposed || (isDesktopRuntime() && !hasPremiumAccess())) return;
     const wasLocked = this.isLocked;
     super.unlockPanel();
     if (wasLocked) {
       this.renderWatchlistPills();
       this.showLoading(t('components.telegramIntel.loading'));
+      this.onAccessGranted?.();
     }
   }
 
@@ -602,6 +608,7 @@ export class TelegramIntelPanel extends Panel {
 
   public destroy(): void {
     this.disposed = true;
+    this.onAccessGranted = null;
     this.previewRequestId++;
     this.watchlistRequestId++;
     if (this.previewTimer) {

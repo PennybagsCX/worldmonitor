@@ -59,17 +59,29 @@ describe('Telegram layout gating and lazy mount', () => {
   it('keeps desktop Telegram gated on repeated passes and unlocks on current access', () => {
     const manager = layout();
     const p = new TelegramIntelPanel();
+    const load = vi.fn();
+    p.setAccessGrantedHandler(load);
     panels.push(p);
     manager.ctx.panels['telegram-intel'] = p;
     manager.updatePanelGating({ user: null });
     manager.updatePanelGating({ user: null });
     expect(p.getElement().classList.contains('panel-is-locked')).toBe(true);
+    expect(load).not.toHaveBeenCalled();
     access.premium = true;
     manager.updatePanelGating({ user: null });
     expect(p.getElement().classList.contains('panel-is-locked')).toBe(false);
+    expect(load).toHaveBeenCalledTimes(1);
+    manager.updatePanelGating({ user: null });
+    expect(load).toHaveBeenCalledTimes(1);
     access.premium = false;
     manager.updatePanelGating({ user: null });
     expect(p.getElement().classList.contains('panel-is-locked')).toBe(true);
+    p.unlockPanel();
+    expect(load).toHaveBeenCalledTimes(1);
+    access.premium = true;
+    p.destroy();
+    p.unlockPanel();
+    expect(load).toHaveBeenCalledTimes(1);
   });
   it('does not gate free web Telegram', () => {
     access.desktop = false;
