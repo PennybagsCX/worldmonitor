@@ -216,7 +216,13 @@ const HYDRATION_DATASET_KEYS = HYDRATION_DATASETS.map((dataset) => dataset.key);
 async function ignoreDeadRoute(work: () => Promise<unknown>): Promise<void> {
   try {
     await work();
-  } catch {}
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/Target closed|Route is already handled|Cannot find context with specified id|guid/i.test(message)) {
+      return;
+    }
+    throw error;
+  }
 }
 
 /** Mark App.ts emits from handleViewportPrime — proves the handler was ENTERED. */
