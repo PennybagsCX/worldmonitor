@@ -78,6 +78,15 @@ test('failed fetch releases ownership and exposes a working retry', async () => 
   assert.equal(panel.renders, 1);
 });
 
+test('unavailable single-market fallback exposes a retry', async () => {
+  const { panel, requests } = await harness();
+  const pending = panel.fetchData();
+  requests.forEach(r => r.resolve({ upstreamUnavailable: true }));
+  await pending;
+  assert.equal(panel.renders, undefined);
+  assert.equal(typeof panel.retry, 'function');
+});
+
 test('obsolete failure cannot clear newer request ownership or show an error', async () => {
   const { panel, requests } = await harness();
   panel.settings.market = 'all';

@@ -265,6 +265,10 @@ export class ConsumerPricesPanel extends Panel {
         this.movers = movers;
         this.spread = spread;
         this.freshness = freshness;
+        if ([overview, categories, movers, spread, freshness].some((response) => response.upstreamUnavailable)) {
+          this.showError(undefined, () => void this.fetchData());
+          return;
+        }
       }
       this.render();
     } catch {
