@@ -212,6 +212,13 @@ const WEB_FAST_TIER_DEADLINE_MS = 1_200;
 
 const HYDRATION_DATASET_KEYS = HYDRATION_DATASETS.map((dataset) => dataset.key);
 
+/** Playwright can throw a GUID bind error synchronously on a dead Route. */
+async function ignoreDeadRoute(work: () => Promise<unknown>): Promise<void> {
+  try {
+    await work();
+  } catch {}
+}
+
 /** Mark App.ts emits from handleViewportPrime — proves the handler was ENTERED. */
 const VIEWPORT_HYDRATION_MARK = 'wm:hydration:viewport-trigger';
 
@@ -242,13 +249,18 @@ async function installHydrationRequestAccounting(
   // decide whether a request-budget assertion passes.
   await page.route(
     /^https?:\/\/(?!(127\.0\.0\.1:4173|localhost:4173)(?:\/|$)).*/i,
-    (route) => route.abort('blockedbyclient'),
+    (route) => ignoreDeadRoute(() => route.abort('blockedbyclient')),
   );
 
   await page.route('**/api/bootstrap*', async (route) => {
     log.inflight += 1;
     try {
-      const url = new URL(route.request().url());
+      let url: URL;
+      try {
+        url = new URL(route.request().url());
+      } catch {
+        return;
+      }
       const tier = url.searchParams.get('tier');
 
       if (tier === 'fast' || tier === 'slow') {
@@ -280,19 +292,17 @@ async function installHydrationRequestAccounting(
         // throws on a request that no longer exists, either as a rejected
         // promise or a synchronous Playwright GUID bind error. That IS the
         // scenario under test, not a spec failure.
-        try {
-          await route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({ data, missing }),
-          });
-        } catch {}
+        await ignoreDeadRoute(() => route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ data, missing }),
+        }));
         return;
       }
 
       const keys = requestedKeys(url.href);
       for (const key of keys) log.counts[key] = (log.counts[key] ?? 0) + 1;
-      await route.fulfill({
+      await ignoreDeadRoute(() => route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
@@ -306,7 +316,7 @@ async function installHydrationRequestAccounting(
           ])),
           missing: [],
         }),
-      }).catch(() => {});
+      }));
     } finally {
       log.inflight -= 1;
     }
@@ -321,13 +331,13 @@ async function installHydrationRequestAccounting(
       log.inflight += 1;
       try {
         log.counts[dataset.key] = (log.counts[dataset.key] ?? 0) + 1;
-        await route.fulfill({
+        await ignoreDeadRoute(() => route.fulfill({
           status: 200,
           contentType: 'application/json',
           body: JSON.stringify(
             options.uncacheableFallbacks ? EMPTY_FALLBACK_PAYLOAD : dataset.payload,
           ),
-        }).catch(() => {});
+        }));
       } finally {
         log.inflight -= 1;
       }
