@@ -58,18 +58,26 @@ test('real fetch rejects a gzip body whose decoded bytes exceed the cap', async 
   assert.equal((await response.json()).error, 'Failed to fetch feed');
 });
 
-test('a response arriving after timeout has its body canceled', async (t) => {
+test('a response arriving after timeout has its body canceled', { timeout: 5000 }, async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
+  const fetchStarted = Promise.withResolvers();
+  const bodyCanceled = Promise.withResolvers();
   let release;
   let canceled = false;
-  spyFetch(() => new Promise((resolve) => { release = resolve; }));
+  spyFetch(() => new Promise((resolve) => {
+    release = resolve;
+    fetchStarted.resolve();
+  }));
   const pending = handler(makeRequest('https://techcrunch.com/feed'));
-  for (let i = 0; !release && i < 100; i++) await new Promise((resolve) => setImmediate(resolve));
+  await fetchStarted.promise;
   assert.ok(release);
   t.mock.timers.tick(12_001);
   assert.equal((await pending).status, 504);
-  release(new Response(new ReadableStream({ cancel() { canceled = true; } })));
-  await new Promise((resolve) => setImmediate(resolve));
+  release(new Response(new ReadableStream({ cancel() {
+    canceled = true;
+    bodyCanceled.resolve();
+  } })));
+  await bodyCanceled.promise;
   assert.equal(canceled, true);
 });
 
@@ -113,30 +121,34 @@ test('rejects decoded bodies over 5 MiB regardless of Content-Length and aborts 
   }
 });
 
-test('body deadline covers slow chunks and cancels a stalled read without waiting for cancel', async (t) => {
+test('body deadline covers slow chunks and cancels a stalled read without waiting for cancel', { timeout: 5000 }, async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
+  const firstRead = Promise.withResolvers();
+  const nextRead = Promise.withResolvers();
+  let reads = 0;
   let canceled = false;
   let signal;
   let streamController;
   const body = new ReadableStream({
     start(controller) { streamController = controller; },
+    pull() { (reads++ === 0 ? firstRead : nextRead).resolve(); },
     cancel() { canceled = true; return new Promise(() => {}); },
-  });
+  }, { highWaterMark: 0 });
   spyFetch((_url, init) => { signal = init.signal; return new Response(body); });
   const pending = handler(makeRequest('https://techcrunch.com/feed'));
-  for (let i = 0; !body.locked && i < 100; i++) {
-    await new Promise((resolve) => setImmediate(resolve));
-  }
+  // API-key hashing is async: scheduler turns do not prove read admission.
+  // No prefetch means pull runs only when the proxy actually asks for a chunk.
+  await firstRead.promise;
   assert.ok(signal);
   assert.equal(body.locked, true);
   t.mock.timers.tick(11_000);
   streamController.enqueue(new TextEncoder().encode('<rss>'));
-  await new Promise((resolve) => setImmediate(resolve));
+  await nextRead.promise;
   t.mock.timers.tick(1_001);
-  await new Promise((resolve) => setImmediate(resolve));
+  const response = await pending;
   assert.equal(signal.aborted, true);
   assert.equal(canceled, true);
-  assert.equal((await pending).status, 504);
+  assert.equal(response.status, 504);
   assert.equal(body.locked, false);
 });
 
@@ -188,15 +200,19 @@ test('oversize relay retry preserves the original non-ok direct body and status'
   assert.equal(await response.text(), 'upstream unavailable');
 });
 
-test('relay-only body stalls time out and abort the relay transport', async (t) => {
+test('relay-only body stalls time out and abort the relay transport', { timeout: 5000 }, async (t) => {
   process.env.WS_RELAY_URL = 'wss://relay.example.com';
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let signal;
   let canceled = false;
-  const body = new ReadableStream({ cancel() { canceled = true; } });
+  const readStarted = Promise.withResolvers();
+  const body = new ReadableStream({
+    pull() { readStarted.resolve(); },
+    cancel() { canceled = true; },
+  }, { highWaterMark: 0 });
   const calls = spyFetch((_url, init) => { signal = init.signal; return new Response(body); });
   const pending = handler(makeRequest('https://rss.cnn.com/rss/edition.rss'));
-  for (let i = 0; !body.locked && i < 100; i++) await new Promise((resolve) => setImmediate(resolve));
+  await readStarted.promise;
   assert.equal(body.locked, true);
   t.mock.timers.tick(12_001);
   assert.equal((await pending).status, 504);
