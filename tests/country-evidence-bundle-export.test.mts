@@ -869,16 +869,21 @@ describe('CSV spreadsheet safety', () => {
     });
     try {
       const payloads = ['=1+1', '+SUM(1,2)', '-1+2', '@SUM(1)', '\t=1', '\r=1', '\n=1', '  =1'];
-      exports.exportToCSV({ timestamp: 0, news: payloads.map(title => ({
+      exports.exportToCSV({ timestamp: 0, markets: [{ symbol: 'TEST', name: '-2.5', price: 10, change: -2.5 }], news: payloads.map(title => ({
         title, source: 'ordinary, "quoted"', link: 'https://example.com/?a=1&b=2',
         pubDate: new Date(0), isAlert: false,
       })) });
       const dashboard = await blobs[0]!.text();
+      assert.ok(dashboard.includes("\"TEST\",\"'-2.5\",\"10\",\"-2.5\""), 'numeric change stays numeric while numeric-looking text is neutralized');
       for (const value of payloads) assert.ok(dashboard.includes(`"'${value.replace(/"/g, '""')}"`));
       assert.ok(dashboard.includes('"ordinary, ""quoted"""'));
       assert.ok(dashboard.includes('"https://example.com/?a=1&b=2"'));
-      exports.exportCountryBriefCSV({ country: 'Test', code: 'TS', generatedAt: 'now', brief: '=1+1' });
-      assert.ok((await blobs[1]!.text()).includes('"\'=1+1"'));
+      exports.exportCountryBriefCSV({ country: 'Test', code: 'TS', generatedAt: 'now', brief: '=1+1', signals: { change: -3, count: 0, missing: null } });
+      const brief = await blobs[1]!.text();
+      assert.ok(brief.includes('"\'=1+1"'));
+      assert.ok(brief.includes('"change","-3"'));
+      assert.ok(brief.includes('"count","0"'));
+      assert.ok(brief.includes('"missing","null"'));
     } finally {
       restoreGlobal('document', originalDocument);
       URL.createObjectURL = originalCreate;
