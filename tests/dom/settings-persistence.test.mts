@@ -49,7 +49,7 @@ describe('settings file import', () => {
   it('round trips real exports including legacy optional fields and variant prefixes', async () => {
     localStorage.setItem('worldmonitor-monitors', JSON.stringify([monitor, { ...monitor, id: 'geo', name: 'Energy', lat: 25, lon: 55, futureField: true }]));
     localStorage.setItem('worldmonitor-panels-tech', '{"future-panel":{"enabled":true}}');
-    localStorage.setItem('wm-map-theme:future-provider', 'future-theme');
+    localStorage.setItem('wm-map-theme:carto', 'voyager');
     localStorage.setItem('worldmonitor-disabled-feeds-schema', '9');
     const before = snapshot();
     const create = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:settings');
@@ -83,7 +83,44 @@ describe('settings file import', () => {
   });
 
   it('does not turn a storage failure into import success', async () => {
-    vi.stubGlobal('localStorage', { setItem() { throw new DOMException('Full', 'QuotaExceededError'); } });
-    await expect(importSettings(file({ 'worldmonitor-theme': 'light' }))).rejects.toThrow('Full');
+    const storage = localStorage;
+    vi.stubGlobal('localStorage', { getItem: storage.getItem.bind(storage), removeItem: storage.removeItem.bind(storage), setItem() { throw new DOMException('Full', 'QuotaExceededError'); } });
+    await expect(importSettings(file({ 'worldmonitor-theme': 'light' }))).rejects.toThrow('Cannot persist');
   });
+});
+
+
+it('ignores prefix impostors while preserving known variant keys', async () => {
+  await importSettings(file({ 'worldmonitor-theme-evil': '=bad', 'worldmonitor-panels-tech': '{}', 'wm-map-theme:unknown': 'bad' }));
+  expect(localStorage.getItem('worldmonitor-theme-evil')).toBeNull();
+  expect(localStorage.getItem('wm-map-theme:unknown')).toBeNull();
+  expect(localStorage.getItem('worldmonitor-panels-tech')).toBe('{}');
+});
+
+it.each([
+  ['worldmonitor-theme', 'invalid'],
+  ['wm-stream-quality', 'ultra'],
+  ['wm-map-theme:carto', 'invalid'],
+  ['wm-analysis-frameworks', JSON.stringify([{ id: 'x', name: 'x', description: '', systemPromptAppend: 'x'.repeat(2001), isBuiltIn: false, createdAt: 0 }])],
+  ['worldmonitor-live-channels', JSON.stringify({ order: ['x'], custom: [{ id: 'x', name: 'x', hlsUrl: 'javascript:alert(1)' }] })],
+  ['worldmonitor-monitors', ' '.repeat(256 * 1024 + 1)],
+])('rejects invalid %s before any storage change', async (key, value) => {
+  const before = snapshot();
+  await expect(importSettings(file({ 'worldmonitor-theme': 'light', [key]: value }))).rejects.toThrow();
+  vi.unstubAllGlobals();
+  expect(snapshot()).toEqual(before);
+});
+
+it('restores earlier entries when a later quota write fails', async () => {
+  const before = snapshot();
+  const original = localStorage.setItem.bind(localStorage);
+  let failed = false;
+  const storage = localStorage;
+  vi.stubGlobal('localStorage', { getItem: storage.getItem.bind(storage), removeItem: storage.removeItem.bind(storage), setItem(key: string, value: string) {
+    if (key === 'wm-font-scale' && !failed) { failed = true; throw new DOMException('Full', 'QuotaExceededError'); }
+    return original(key, value);
+  } });
+  await expect(importSettings(file({ 'worldmonitor-theme': 'light', 'wm-font-scale': '1.2' }))).rejects.toThrow('Cannot persist');
+  vi.unstubAllGlobals();
+  expect(snapshot()).toEqual(before);
 });
