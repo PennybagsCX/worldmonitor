@@ -40,6 +40,47 @@ function isSettingsKey(key: string): boolean {
   return SETTINGS_KEY_PREFIXES.some(prefix => key.startsWith(prefix));
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isMonitorList(value: unknown): boolean {
+  return Array.isArray(value) && value.every(monitor =>
+    isRecord(monitor)
+    && typeof monitor.id === 'string'
+    && typeof monitor.color === 'string'
+    && Array.isArray(monitor.keywords)
+    && monitor.keywords.every(keyword => typeof keyword === 'string')
+    && (monitor.name === undefined || typeof monitor.name === 'string')
+    && (monitor.lat === undefined || (typeof monitor.lat === 'number' && Number.isFinite(monitor.lat)))
+    && (monitor.lon === undefined || (typeof monitor.lon === 'number' && Number.isFinite(monitor.lon))),
+  );
+}
+
+function parseImportedEntries(parsed: unknown): Array<[string, string]> {
+  if (!isRecord(parsed) || !isRecord(parsed.data)) {
+    throw new Error('Invalid format: expected an object with a data property.');
+  }
+  if (parsed.version !== 1) {
+    throw new Error(`Unsupported settings version: ${parsed.version}`);
+  }
+
+  const entries: Array<[string, string]> = [];
+  for (const [key, value] of Object.entries(parsed.data)) {
+    if (!isSettingsKey(key)) continue;
+    if (typeof value !== 'string') {
+      throw new Error(`Invalid setting: ${key} must be a string.`);
+    }
+    // The monitor reader trusts the stored JSON and immediately uses array
+    // and string methods. Reject invalid records before changing any settings.
+    if (key === 'worldmonitor-monitors' && !isMonitorList(JSON.parse(value))) {
+      throw new Error('Invalid setting: worldmonitor-monitors must contain monitor records.');
+    }
+    entries.push([key, value]);
+  }
+  return entries;
+}
+
 export const __testing__ = { isSettingsKey };
 
 export function exportSettings(): void {
@@ -99,24 +140,14 @@ export function importSettings(file: File): Promise<ImportResult> {
     reader.onload = (e) => {
       try {
         const result = e.target?.result as string;
-        const parsed = JSON.parse(result) as ExportedSettings;
-
-        if (!parsed || typeof parsed.data !== 'object' || Array.isArray(parsed.data)) {
-          throw new Error('Invalid format: expected an object with a data property.');
-        }
-
-        if (parsed.version !== 1) {
-          throw new Error(`Unsupported settings version: ${parsed.version}`);
-        }
+        const entries = parseImportedEntries(JSON.parse(result));
 
         let keysImported = 0;
         const importedKeys: string[] = [];
-        for (const [key, value] of Object.entries(parsed.data)) {
-          if (isSettingsKey(key) && typeof value === 'string') {
-            localStorage.setItem(key, value);
-            keysImported++;
-            importedKeys.push(key);
-          }
+        for (const [key, value] of entries) {
+          localStorage.setItem(key, value);
+          keysImported++;
+          importedKeys.push(key);
         }
         invalidatePanelStorageCacheForKeys(importedKeys);
 
