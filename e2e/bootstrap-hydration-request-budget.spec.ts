@@ -254,7 +254,19 @@ async function installHydrationRequestAccounting(
       if (tier === 'fast' || tier === 'slow') {
         log.tiers.push(tier);
         if (tier === 'fast' && options.fastTierDelayMs) {
-          await new Promise((resolve) => setTimeout(resolve, options.fastTierDelayMs));
+          await new Promise<void>((resolve) => {
+            let settled = false;
+            const finish = () => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              page.off('close', finish);
+              resolve();
+            };
+            const timer = setTimeout(finish, options.fastTierDelayMs);
+            page.once('close', finish);
+          });
+          if (page.isClosed()) return;
         }
         const data: Record<string, unknown> = {};
         const missing: string[] = [];
@@ -264,14 +276,17 @@ async function installHydrationRequestAccounting(
           else missing.push(dataset.key);
         }
         if (tier === 'slow') Object.assign(data, options.extraSlowTierData ?? {});
-        // The client aborts the fast tier at its deadline, which rejects the
-        // fulfill of a request that no longer exists. That rejection IS the
+        // The client aborts the fast tier at its deadline. Fulfill then
+        // throws on a request that no longer exists, either as a rejected
+        // promise or a synchronous Playwright GUID bind error. That IS the
         // scenario under test, not a spec failure.
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ data, missing }),
-        }).catch(() => {});
+        try {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ data, missing }),
+          });
+        } catch {}
         return;
       }
 
