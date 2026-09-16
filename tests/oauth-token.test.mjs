@@ -974,6 +974,28 @@ describe('U6 tokenHandler — refresh-token reuse revokes the family (GHSA-f6gj)
     assert.ok(redis.store.has(`oauth:famrev:${FAMILY}`));
   });
 
+  it('client lookup failure returns retry guidance and restores the refresh token', async () => {
+    await ensureFixtures();
+    const { redis, deps } = makeDeps();
+    redis.store.set('oauth:refresh:rt-client-read', {
+      kind: 'pro', client_id: CLIENT_ID, userId: USER_ID,
+      mcpTokenId: MCP_TOKEN_ID, scope: 'mcp_pro', family_id: 'fam_client_read',
+    });
+    const originalRedisGet = deps.redisGet;
+    deps.redisGet = async (key) => {
+      if (key === `oauth:client:${CLIENT_ID}`) throw new Error('redis unavailable');
+      return originalRedisGet(key);
+    };
+    const resp = await tokenHandler(makeReq('refresh_token', {
+      refresh_token: 'rt-client-read', client_id: CLIENT_ID,
+    }), deps);
+    assert.equal(resp.status, 503);
+    assert.equal(resp.headers.get('Retry-After'), '5');
+    assert.equal((await resp.json()).error, 'server_error');
+    assert.equal((await originalRedisGet('oauth:refresh:rt-client-read')).kind, 'pro');
+    assert.equal([...redis.store.keys()].some(key => key.startsWith('oauth:token:')), false);
+  });
+
   it('revocation-state read failure restores the consumed token and does not rotate', async () => {
     await ensureFixtures();
     const { redis, deps } = makeDeps();
