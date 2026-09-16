@@ -18,6 +18,8 @@
  *  - Present azp on a trusted app/preview/desktop origin → accepted (#8178)
  *  - Present azp on a foreign or vendor origin → rejected
  *  - Absent azp → fail open (non-browser Clerk tokens omit it)
+ *  - Empty-string azp → fail open (intentional machine-token policy)
+ *  - Present non-string azp, including explicit null → rejected
  *  - JWKS transport failure → { valid: false, reason: 'unverifiable' }
  *  - JWKS resolver is reused across calls (module-scoped, not per-request)
  */
@@ -696,6 +698,11 @@ describe('validateBearerToken (with JWKS)', () => {
         `expected non-string azp rejected: ${JSON.stringify(azp)}`,
       );
     }
+  });
+
+  it('rejects an explicit null azp claim', async () => {
+    const token = await signToken({ sub: 'user_null_azp', plan: 'pro', azp: null });
+    assert.deepEqual(await validateBearerToken(token), { valid: false, reason: 'invalid' });
   });
 
   it('rejects SITE_URL mismatch when azp is outside the CORS allowlist', async () => {

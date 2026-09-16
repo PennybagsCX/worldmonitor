@@ -275,7 +275,9 @@ export async function validateBearerToken(token: string): Promise<SessionResult>
     if (typeof azp === 'string' && azp.length > 0 && !isAllowedClerkAuthorizedParty(azp)) {
       return { valid: false, reason: 'invalid' };
     }
-    if (azp !== undefined && azp !== null && typeof azp !== 'string') {
+    // Present non-string claims (including explicit null) are unbound; only
+    // absent (`undefined`) and empty-string azp remain fail-open.
+    if (azp !== undefined && typeof azp !== 'string') {
       return { valid: false, reason: 'invalid' };
     }
 
