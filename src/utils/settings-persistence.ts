@@ -74,7 +74,7 @@ function validateSetting(key: string, raw: string, policies: {
   }
   if (key === 'wm-analysis-frameworks') {
     const frameworks: unknown = JSON.parse(raw);
-    if (!Array.isArray(frameworks) || frameworks.length > MAX_IMPORTED) return invalid();
+    if (!Array.isArray(frameworks) || frameworks.length > MAX_IMPORTED) invalid();
     for (const fw of frameworks) {
       if (!isRecord(fw) || typeof fw.id !== 'string' || typeof fw.name !== 'string'
         || typeof fw.description !== 'string' || typeof fw.systemPromptAppend !== 'string'
@@ -89,12 +89,12 @@ function validateSetting(key: string, raw: string, policies: {
   if (key === 'worldmonitor-live-channels') {
     const channels: unknown = JSON.parse(raw);
     if (!isRecord(channels) || !Array.isArray(channels.order) || !channels.order.every(id => typeof id === 'string')
-      || !Array.isArray(channels.custom)) return invalid();
+      || !Array.isArray(channels.custom)) invalid();
     for (const channel of channels.custom) {
-      if (!isRecord(channel) || typeof channel.id !== 'string' || typeof channel.name !== 'string') return invalid();
+      if (!isRecord(channel) || typeof channel.id !== 'string' || typeof channel.name !== 'string') invalid();
       if (channel.handle !== undefined && typeof channel.handle !== 'string') invalid();
       if (channel.hlsUrl !== undefined) {
-        if (typeof channel.hlsUrl !== 'string' || channel.hlsUrl.length > 2048) return invalid();
+        if (typeof channel.hlsUrl !== 'string' || channel.hlsUrl.length > 2048) invalid();
         const url = new URL(channel.hlsUrl);
         if (url.username || url.password || !(url.protocol === 'https:' || (url.protocol === 'http:' && url.hostname === '127.0.0.1'))) invalid();
       }
