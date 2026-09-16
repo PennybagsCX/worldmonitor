@@ -105,6 +105,50 @@ describe('widget-agent unified tester key auth', () => {
     });
   });
 
+  it('validates protected cookie candidates independently across stale and valid values', async () => {
+    for (const [pro, widget, tier] of [
+      ['stale', 'browser-test-key', 'pro'],
+      ['browser-test-key', 'stale', 'pro'],
+      ['stale', 'server-widget-key', 'basic'],
+      ['server-pro-key', 'stale', 'pro'],
+    ]) {
+      for (const sessionHeader of ['', 'wms_automatic-anonymous-session']) {
+        fetchMock.mock.resetCalls();
+        const res = await handler(new Request('https://api.worldmonitor.app/api/widget-agent', {
+          method: 'POST',
+          headers: {
+            Origin: 'https://worldmonitor.app',
+            'Content-Type': 'application/json',
+            ...(sessionHeader ? { 'X-WorldMonitor-Key': sessionHeader } : {}),
+            Cookie: `__Host-wm-pro-key=${pro}; __Host-wm-widget-key=${widget}`,
+          },
+          body: JSON.stringify({ prompt: 'Build a widget', mode: 'create', tier: 'basic' }),
+        }));
+        assert.equal(res.status, 200, `${pro}/${widget}/${sessionHeader}`);
+        assert.equal(fetchMock.mock.calls.length, 1);
+        const init = fetchMock.mock.calls[0].arguments[1] as RequestInit;
+        assert.equal(JSON.parse(String(init.body)).tier, tier);
+      }
+    }
+  });
+
+  it('does not rescue explicit invalid enterprise headers with ambient cookies', async () => {
+    for (const name of ['X-WorldMonitor-Key', 'X-Api-Key']) {
+      for (const cookie of [
+        '__Host-wm-pro-key=stale; __Host-wm-widget-key=browser-test-key',
+        '__Host-wm-pro-key=server-pro-key; __Host-wm-widget-key=server-widget-key',
+      ]) {
+        const res = await handler(new Request('https://api.worldmonitor.app/api/widget-agent', {
+          method: 'POST',
+          headers: { Origin: 'https://worldmonitor.app', 'Content-Type': 'application/json', [name]: 'wrong-key', Cookie: cookie },
+          body: JSON.stringify({ prompt: 'Build a widget', mode: 'create', tier: 'basic' }),
+        }));
+        assert.equal(res.status, 403, `${name}/${cookie}`);
+      }
+    }
+    assert.equal(fetchMock.mock.calls.length, 0);
+  });
+
   it('rejects retired domain cookie names before invoking the paid relay', async () => {
     const res = await handler(new Request('https://api.worldmonitor.app/api/widget-agent', {
       method: 'POST',

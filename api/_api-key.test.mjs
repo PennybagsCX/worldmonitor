@@ -91,6 +91,20 @@ test('HttpOnly wm-widget-key cookie is accepted as enterprise key without a JS-r
   assert.equal(r.credential, ENTERPRISE_KEY, 'result must expose the credential that actually authenticated');
 });
 
+test('a stale protected cookie does not mask the other valid enterprise cookie', async () => {
+  for (const cookie of [
+    `__Host-wm-pro-key=stale; __Host-wm-widget-key=${encodeURIComponent(ENTERPRISE_KEY)}`,
+    `__Host-wm-pro-key=${encodeURIComponent(ENTERPRISE_KEY)}; __Host-wm-widget-key=stale`,
+  ]) {
+    const accepted = await validateApiKey(makeReq({ cookie, key: 'wms_automatic' }), { forceKey: true });
+    assert.equal(accepted.valid, true);
+    assert.equal(accepted.credential, ENTERPRISE_KEY);
+    const rejected = await validateApiKey(makeReq({ cookie, key: 'explicit-invalid' }), { forceKey: true });
+    assert.equal(rejected.valid, false);
+    assert.equal(rejected.error, 'Invalid API key');
+  }
+});
+
 test('dual wm-pro-key cookies use the first value sent by the browser', async () => {
   const r = await validateApiKey(makeReq({
     cookie: `__Host-wm-pro-key=${encodeURIComponent(ENTERPRISE_KEY)}; __Host-wm-pro-key=old-js-readable-key`,
