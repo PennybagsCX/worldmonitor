@@ -63,6 +63,15 @@ describe('military base request identity', () => {
     expect((await fetchBases(30, 30, 40, 40, 5))?.bases[0]?.id).toBe('B');
     expect(listMilitaryBases).toHaveBeenCalledTimes(3);
   });
+
+  it('treats handler empty-200 as a miss so the key can retry', async () => {
+    const fetchBases = await service();
+    listMilitaryBases.mockResolvedValueOnce({ bases: [], clusters: [], totalInView: 0, truncated: false });
+    expect(await fetchBases(0, 0, 10, 10, 5)).toBeNull();
+    listMilitaryBases.mockResolvedValueOnce(response('recovered'));
+    expect((await fetchBases(0, 0, 10, 10, 5))?.bases[0]?.id).toBe('recovered');
+    expect(listMilitaryBases).toHaveBeenCalledTimes(2);
+  });
 });
 
 it('shares normalized requests that cover every original viewport edge', async () => {

@@ -7094,6 +7094,8 @@ export class DeckGLMap {
       if (this.maplibreMap.getZoom() !== zoom
         || currentSw.lat !== sw.lat || currentSw.lng !== sw.lng
         || currentNe.lat !== ne.lat || currentNe.lng !== ne.lng) return;
+      // Empty-200 / error payloads are not loaded coverage; keep bundled fallback.
+      if (result.bases.length === 0 && result.clusters.length === 0 && result.totalInView === 0) return;
       this.serverBases = result.bases;
       this.serverBaseClusters = result.clusters;
       this.serverBasesLoaded = true;

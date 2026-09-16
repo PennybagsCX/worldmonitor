@@ -446,6 +446,19 @@ describe('DeckGLMap military base viewport commits', () => {
     expect(state.serverBasesLoaded).toBe(false);
   });
 
+  it('does not commit a handler empty-200 as loaded coverage', async () => {
+    listMilitaryBases.mockResolvedValue({ bases: [], clusters: [], totalInView: 0, truncated: false });
+    const { map, fake } = await mapWith(initialState({ zoom: 4, layers: { ...allLayersOff(), bases: true } }));
+    fake.setCenter([12, -8]);
+    fake.setZoom(4);
+    fake.emit('moveend', {});
+    await vi.advanceTimersByTimeAsync(300);
+    const state = map as unknown as { serverBases: unknown[]; serverBaseClusters: unknown[]; serverBasesLoaded: boolean };
+    expect(state.serverBases).toEqual([]);
+    expect(state.serverBaseClusters).toEqual([]);
+    expect(state.serverBasesLoaded).toBe(false);
+  });
+
   it('rejects a response during the debounce window and after layer disable', async () => {
     let reply!: (value: unknown) => void;
     listMilitaryBases.mockImplementation(() => new Promise((resolve) => { reply = resolve; }));

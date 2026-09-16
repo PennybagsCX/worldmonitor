@@ -77,6 +77,12 @@ export async function fetchMilitaryBases(
         country: filters?.country || '',
       });
 
+      // Handler empty-200 and backend errors share this payload. Treat it as
+      // a miss so DeckGLMap can keep the bundled fallback and the key can retry.
+      if (resp.bases.length === 0 && resp.clusters.length === 0 && resp.totalInView === 0) {
+        return null;
+      }
+
       const bases = resp.bases.map(entryToEnriched);
       const result: CachedResult = {
         bases,
