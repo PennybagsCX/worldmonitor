@@ -64,7 +64,7 @@ function validateSetting(key: string, raw: string, policies: {
   STREAM_QUALITY_OPTIONS: readonly { value: string }[];
 }): void {
   const { MAX_IMPORTED, MAX_INSTRUCTIONS_LEN, MAP_THEME_OPTIONS, STREAM_QUALITY_OPTIONS } = policies;
-  const invalid = () => { throw new Error(`Invalid setting: ${key}`); };
+  const invalid = (): never => { throw new Error(`Invalid setting: ${key}`); };
   if (key === 'worldmonitor-theme' && !['auto', 'dark', 'light'].includes(raw)) invalid();
   if (key === 'wm-map-provider' && !Object.prototype.hasOwnProperty.call(MAP_THEME_OPTIONS, raw)) invalid();
   if (key === 'wm-stream-quality' && !STREAM_QUALITY_OPTIONS.some(option => option.value === raw)) invalid();
@@ -75,6 +75,7 @@ function validateSetting(key: string, raw: string, policies: {
   if (key === 'wm-analysis-frameworks') {
     const frameworks: unknown = JSON.parse(raw);
     if (!Array.isArray(frameworks) || frameworks.length > MAX_IMPORTED) invalid();
+    if (!Array.isArray(frameworks)) return;
     for (const fw of frameworks) {
       if (!isRecord(fw) || typeof fw.id !== 'string' || typeof fw.name !== 'string'
         || typeof fw.description !== 'string' || typeof fw.systemPromptAppend !== 'string'
@@ -90,6 +91,7 @@ function validateSetting(key: string, raw: string, policies: {
     const channels: unknown = JSON.parse(raw);
     if (!isRecord(channels) || !Array.isArray(channels.order) || !channels.order.every(id => typeof id === 'string')
       || !Array.isArray(channels.custom)) invalid();
+    if (!isRecord(channels) || !Array.isArray(channels.custom)) return;
     for (const channel of channels.custom) {
       if (!isRecord(channel) || typeof channel.id !== 'string' || typeof channel.name !== 'string') invalid();
       if (channel.handle !== undefined && typeof channel.handle !== 'string') invalid();
