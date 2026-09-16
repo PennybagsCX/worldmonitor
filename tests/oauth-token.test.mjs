@@ -717,6 +717,7 @@ describe('U6 tokenHandler — refresh_token (Pro)', () => {
       deps,
     );
     assert.equal(resp.status, 503, 'transient Convex failure → 503');
+    assert.equal(resp.headers.get('Retry-After'), '5');
     const body = await resp.json();
     assert.equal(body.error, 'server_error');
     // F3: refresh token must be restored to Redis with the original payload.
@@ -952,6 +953,7 @@ describe('U6 tokenHandler — refresh-token reuse revokes the family (GHSA-f6gj)
       deps,
     );
     assert.equal(resp.status, 503);
+    assert.equal(resp.headers.get('Retry-After'), '5');
     assert.equal((await resp.json()).error, 'server_error');
   });
 
@@ -994,6 +996,7 @@ describe('U6 tokenHandler — refresh-token reuse revokes the family (GHSA-f6gj)
     _uuidCounter = 950;
     const resp = await tokenHandler(makeReq('refresh_token', { refresh_token: 'rt-live', client_id: CLIENT_ID }), deps);
     assert.equal(resp.status, 503);
+    assert.equal(resp.headers.get('Retry-After'), '5');
     assert.equal((await resp.json()).error, 'server_error');
     const restored = redis.store.get('oauth:refresh:rt-live');
     assert.ok(restored, 'refresh token is restored when revocation state is unknown');
@@ -1027,6 +1030,7 @@ describe('U6 tokenHandler — refresh-token reuse revokes the family (GHSA-f6gj)
       deps,
     );
     assert.equal(resp.status, 503);
+    assert.equal(resp.headers.get('Retry-After'), '5');
     assert.equal(JSON.parse(redis.store.get('oauth:famptr:rt-read-fail')).kind, 'refresh_recovery_failed');
     assert.equal(JSON.parse(redis.store.get('oauth:famattempt:rt-read-fail')).state, 'failed');
     assert.deepEqual(restoreFailures, [
@@ -1058,6 +1062,7 @@ describe('U6 tokenHandler — refresh-token reuse revokes the family (GHSA-f6gj)
       deps,
     );
     assert.equal(resp.status, 503);
+    assert.equal(resp.headers.get('Retry-After'), '5');
     assert.equal(redis.store.has('oauth:refresh:rt-backfill-fail'), true);
     assert.equal(redis.store.has('oauth:famptr:rt-backfill-fail'), true);
     assert.deepEqual(restoreFailures, []);
@@ -1082,6 +1087,7 @@ describe('U6 tokenHandler — refresh-token reuse revokes the family (GHSA-f6gj)
       deps,
     );
     assert.equal(resp.status, 503);
+    assert.equal(resp.headers.get('Retry-After'), '5');
     assert.ok(redis.store.has('oauth:refresh:rt-transient'));
     assertFamilyPointerSetEx(redis.ops, 'oauth:famptr:rt-transient', FAMILY, REFRESH_TTL_SECONDS);
   });
