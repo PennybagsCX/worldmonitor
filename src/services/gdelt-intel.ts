@@ -228,7 +228,7 @@ export function selectHotspotTopicId(hotspot: Pick<Hotspot, 'name' | 'keywords' 
   if (/nuclear|uranium|iaea|reactor|enrichment/.test(text)) return 'nuclear';
   if (/sanction|embargo|tariff|trade war/.test(text)) return 'sanctions';
   if (/spy|espionage|intelligence|surveillance/.test(text)) return 'intelligence';
-  if (/maritime|naval|piracy|strait|shipping|port|sea lane/.test(text)) return 'maritime';
+  if (/maritime|naval|piracy|strait|shipping|\bport\b(?!-)|sea lane|south china sea|warship/.test(text)) return 'maritime';
   return 'military';
 }
 
