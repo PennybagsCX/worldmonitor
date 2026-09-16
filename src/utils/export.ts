@@ -60,7 +60,7 @@ export function exportToCSV(data: ExportData, filename = 'worldmonitor-export'):
 
   lines.push(`# WorldMonitor Export — ${new Date(clean.timestamp).toISOString()}`);
   lines.push('# Note: CSV is a structured summary. Use JSON export for full fidelity.');
-  if (clean.meta?.note) lines.push(`# ${clean.meta.note}`);
+  if (clean.meta?.note) lines.push(csvRow([`# ${clean.meta.note}`]));
   lines.push('');
 
   // News — prefer raw items over clusters; clusters lose individual sources
@@ -695,13 +695,13 @@ export function exportCountryBriefJSON(data: CountryBriefExport): void {
 
 export function exportCountryBriefCSV(data: CountryBriefExport): void {
   const lines: string[] = [];
-  lines.push(`Country Brief: ${data.country} (${data.code})`);
-  lines.push(`Generated: ${data.generatedAt}`);
+  lines.push(csvRow([`Country Brief: ${data.country} (${data.code})`]));
+  lines.push(csvRow([`Generated: ${data.generatedAt}`]));
   lines.push('');
   if (data.score != null) {
     lines.push(`Score,${data.score}`);
-    lines.push(`Level,${data.level || ''}`);
-    lines.push(`Trend,${data.trend || ''}`);
+    lines.push(csvRow(['Level', data.level || '']));
+    lines.push(csvRow(['Trend', data.trend || '']));
   }
   if (data.components) {
     lines.push('');
@@ -726,14 +726,18 @@ export function exportCountryBriefCSV(data: CountryBriefExport): void {
   if (data.brief) {
     lines.push('');
     lines.push('Intelligence Brief');
-    lines.push(`"${data.brief.replace(/"/g, '""')}"`);
+    lines.push(csvRow([data.brief]));
   }
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   downloadFile(lines.join('\n'), `country-brief-${data.code}-${timestamp}.csv`, 'text/csv');
 }
 
 function csvRow(values: string[]): string {
-  return values.map(v => `"${(v || '').replace(/"/g, '""')}"`).join(',');
+  return values.map(value => {
+    const text = value || '';
+    const safe = /^[\t\r\n]|^\s*[=+@-]/.test(text) ? `'${text}` : text;
+    return `"${safe.replace(/"/g, '""')}"`;
+  }).join(',');
 }
 
 function downloadFile(content: string, filename: string, mimeType: string): void {
