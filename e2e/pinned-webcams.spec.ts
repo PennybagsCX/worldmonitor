@@ -40,6 +40,7 @@ test('filters restored and imported records before frame navigation under shippe
   await expect(page.locator('#status')).toHaveText('Imported and read');
   await expect(frames).toHaveCount(1);
   await expect(frames).toHaveAttribute('src', `${base}/123/day`);
+  await expect(page.frameLocator('.pinned-webcam-iframe').locator('body')).toContainText('Windy player test response');
   await page.screenshot({ path: testInfo.outputPath('imported-fallback-desktop.png'), fullPage: true });
   expect(navigations.every(url => new URL(url).origin === 'https://webcams.windy.com')).toBe(true);
 });
