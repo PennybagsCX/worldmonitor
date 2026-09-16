@@ -92,3 +92,19 @@ test('a false save leaves the marker unset and retries until persistence succeed
   assert.equal(storage.getItem(CANADA_ROADS_OPT_IN_KEY), 'done');
   assert.equal(applyCanadaRoadsOptInMigration(input, storage, () => false), input);
 });
+
+test('marker write failure keeps the disabled layers and permits a later retry', () => {
+  const storage = memoryStorage();
+  let fail = true;
+  const setItem = storage.setItem;
+  storage.setItem = (key, value) => {
+    if (fail) throw new Error('quota');
+    setItem(key, value);
+  };
+  const next = applyCanadaRoadsOptInMigration({ canadaRoads: true }, storage, () => true);
+  assert.equal(next.canadaRoads, false);
+  assert.equal(storage.getItem(CANADA_ROADS_OPT_IN_KEY), null);
+  fail = false;
+  assert.equal(applyCanadaRoadsOptInMigration(next, storage, () => true), next);
+  assert.equal(storage.getItem(CANADA_ROADS_OPT_IN_KEY), 'done');
+});

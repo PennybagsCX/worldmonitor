@@ -26,6 +26,10 @@ export function applyCanadaRoadsOptInMigration<T extends { canadaRoads?: boolean
     next = { ...mapLayers, canadaRoads: false };
     if (!saveMapLayers(next)) return next;
   }
-  storage.setItem(CANADA_ROADS_OPT_IN_KEY, 'done');
+  try {
+    storage.setItem(CANADA_ROADS_OPT_IN_KEY, 'done');
+  } catch {
+    // Keep the disabled layers for this session; retry the marker on next load.
+  }
   return next;
 }
