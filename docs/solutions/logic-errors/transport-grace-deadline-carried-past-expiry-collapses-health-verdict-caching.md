@@ -53,9 +53,13 @@ wrong**. Every signal an operator or a test watches stays correct; only volume m
 - **The upstream is not re-probed.** It is tempting to assume the failing relay gets hammered too; it
   does not. The relay verdict has its own independent cache read at the top of
   `readOrProbeRelayGatewayGate` (`api/health.js:3910-3911`), and `parseCachedRelayGatewayGate`
-  (`api/health.js:3826-3837`) reuses any verdict inside its own 60-second freshness window without
-  consulting the grace deadline at all. So the gateway is probed at most once a minute however often
-  the health sweep runs. The damage is Redis command volume, not extra load on Convex.
+  (`api/health.js:3826-3837`) reuses a verdict inside its own 60-second freshness window without
+  consulting the grace deadline at all. So the gateway is probed about once a minute however often
+  the health sweep runs. One deliberate exception: a *persisted follower fallback* is stored with
+  `probed: false` and rejected by that same parser, because nobody actually probed it — it is a
+  predecessor for the streak, not a verdict — so the sweep after one does probe. That exception is
+  bounded by how often a lease owner dies mid-probe, not by poll rate. Either way the damage here is
+  Redis command volume, not extra load on Convex.
 - Secondary amplification: with the snapshot dying every second, concurrent pollers contend the
   refresh lock, wait out `HEALTH_VERDICT_REFRESH_WAIT_MS` (3 s, `api/health.js:191`), and then fall
   through to their *own* sweep — the exact failure mode `snapshotTtlSeconds`' own doc comment
@@ -251,7 +255,9 @@ Two follow-on heuristics worth generalising beyond this repo:
 - **A bug whose only symptom is load is invisible to correctness tests.** If a change can alter how
   long a result may be cached, assert on the *published lifetime*, not only on the response body —
   the end-to-end test below reads the literal `EX` argument of the snapshot write for exactly that
-  reason, and it is the only assertion in the file that would have failed on the pre-fix code. Note
+  reason, and it is the only assertion in the file that detects the cache-lifetime regression itself
+  (the split-field assertions beside it also fail on the pre-fix code, but they pin the field
+  rename rather than the damage it was hiding). Note
   what that does and does not cover: it pins the cache lifetime, which is the cause, and neither
   regression test counts calls. Asserting the downstream call volume would be the stronger test.
 
@@ -296,8 +302,8 @@ assert.equal(snapshotWrite[4], String(__testing__.HEALTH_VERDICT_SNAPSHOT_TTL_SE
 ```
 
 (`:309-312`.) Reading the literal Redis `SET ... EX <ttl>` argument is what gives this test teeth — it
-is the one assertion that would have gone red on the pre-fix code, because the status, the bucket and
-the compact payload were all already correct.
+is the one assertion that pins the actual damage, because the status, the bucket and the compact
+payload were all already correct on the pre-fix code.
 
 Unit, at `:329` — `withTransportGrace` "only decorates unreachable verdicts and restarts after a
 healthy window". The five assertions that pin the split (`:341-350`):
