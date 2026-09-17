@@ -91,8 +91,15 @@ four minutes, against a 15-minute monitor interval. Every run was therefore a "f
 minted a *fresh* three-minute grace, and parked a permanently dead relay in `pending` forever. A
 grace that restarts is not a grace, it is a mute button.
 
-This iteration already republished an expired deadline — but only during the roughly one minute
-between grace expiry and the key being evicted, so the cache collapse was brief and self-limiting.
+This iteration already republished an expired deadline, and how long that lasted depended entirely
+on traffic. Under the sparse regime above the verdict key was evicted between monitor runs, so the
+collapse lasted only the roughly one minute between grace expiry and eviction, and the next run
+restarted the grace. But under *sustained* traffic — any polling at least once per the verdict's own
+60-second freshness window — each probe republished the carried deadline and reset the key's
+retention TTL, so the expired deadline never aged out and the collapse was permanent. That is the
+uncomfortable part: the traffic regime that makes a per-poll sweep most expensive is exactly the one
+that keeps the expired deadline alive. Iteration 2 did not create the bug; it removed the sparse
+regime's accidental escape hatch, making the permanent case the only case.
 
 **Iteration 2 — retain the verdict long enough to outlive a monitor interval.** The verdict is now
 retained in Redis for the freshness window plus the grace plus one monitor interval plus slack
@@ -325,8 +332,8 @@ rewrote every branch SHA. Follow-up issue #8285.
 
 ## Related Issues
 
-- **PR #8282** — the source PR. The relay-gateway gate feature, and the six-round review chain in
-  which Codex raised this P1. Merged 2026-09-17.
+- **PR #8282** — the source PR. The relay-gateway gate feature, and the twelve-round Codex review
+  chain in whose final round this P1 was raised. Merged 2026-09-17.
 - **Issue #8285** — a separate finding from the same review: the scheduled seed-freshness monitor can
   check out an older `scripts/check-seed-freshness.mjs` than the `/api/health` revision production is
   already serving, so every newly shipped pending kind pages falsely during the gate window.
