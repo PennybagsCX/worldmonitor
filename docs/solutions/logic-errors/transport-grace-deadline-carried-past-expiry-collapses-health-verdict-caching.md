@@ -1,0 +1,342 @@
+---
+title: A transport-grace deadline carried past its own expiry poisons the health verdict cache
+date: 2026-09-17
+category: logic-errors
+module: api-health
+problem_type: logic_error
+component: service_object
+symptoms:
+  - "Caught in code review before merge, so these are the symptoms the shipped code would have shown, not an observed incident"
+  - "In any relay outage outlasting the 3-minute transport grace, every RELAY_GATE_UNREACHABLE verdict would republish the already-expired transportGraceUntil deadline instead of dropping it"
+  - "hasExpiredActivationGrace would reject every one of those snapshots as unservable and snapshotTtlSeconds would clip their Redis TTL to its 1-second floor"
+  - "Every health poll for the duration of the outage would therefore run a full ~390-command Redis sweep instead of one warm read"
+  - "The check's own reported verdict/status stays correct throughout, so no functional test or assertion could catch it"
+root_cause: logic_error
+resolution_type: code_fix
+severity: high
+related_components: [background_job]
+tags: [health-check, relay-gateway-gate, transport-grace, softening-deadline, cache-stampede, redis-ttl, pr-review-caught]
+---
+
+# A transport-grace deadline carried past its own expiry poisons the health verdict cache
+
+## Problem
+
+A relay-gate outage grace deadline (`transportGraceUntil`) was carried forward into every later
+verdict so the outage streak would survive sparse health sweeps — but the field is also registered in
+`ENTRY_SOFTENING_DEADLINES` (`api/health.js:3607`), which means republishing it after it expired made
+the generic caching machinery reject every health snapshot on read and write the next one with a
+1-second TTL. For the whole duration of any relay outage lasting past three minutes, `/api/health`
+would silently lose its 60-second cache and run a full ~390-command Redis sweep on **every single
+poll** — roughly a 390x amplification of health-attributable Redis commands, for exactly as long as
+the outage lasted.
+
+Caught by an automated reviewer during the same PR that introduced it, so it never reached
+production. The symptoms below are what the shipped code would have produced, derived from the code
+and reproduced against the real exported functions, not observations of an incident.
+
+## Symptoms
+
+This is the honest part, and it is the whole point of the entry: **nothing would have looked
+wrong**. Every signal an operator or a test watches stays correct; only volume moves.
+
+- `/api/health` keeps returning the *correct* verdict throughout. `healthStatusBucket` classifies an
+  unreachable relay with no live `transportGraceUntil` as `warn` (`api/health.js:3207-3212`), the
+  check moves out of compact `pending` into `problems` exactly when it should, and the 15-minute
+  seed-freshness monitor pages exactly when it should
+  (`scripts/check-seed-freshness.mjs:129-132`, `:201-211`).
+- Every functional assertion — status string, bucket, compact payload placement, monitor predicate —
+  stays green. There is no wrong answer to assert against.
+- The only signal would be **volume**: cache-miss rate on the health verdict snapshot at 100%, Redis
+  command count per health poll jumping from ~0 (warm read) to ~390 (full sweep), and the snapshot
+  key's TTL reading 1 instead of 60.
+- **The upstream is not re-probed.** It is tempting to assume the failing relay gets hammered too; it
+  does not. The relay verdict has its own independent cache read at the top of
+  `readOrProbeRelayGatewayGate` (`api/health.js:3910-3911`), and `parseCachedRelayGatewayGate`
+  (`api/health.js:3826-3837`) reuses any verdict inside its own 60-second freshness window without
+  consulting the grace deadline at all. So the gateway is probed at most once a minute however often
+  the health sweep runs. The damage is Redis command volume, not extra load on Convex.
+- Secondary amplification: with the snapshot dying every second, concurrent pollers contend the
+  refresh lock, wait out `HEALTH_VERDICT_REFRESH_WAIT_MS` (3 s, `api/health.js:191`), and then fall
+  through to their *own* sweep — the exact failure mode `snapshotTtlSeconds`' own doc comment
+  describes (`api/health.js:3668-3682`).
+
+Executed against the current code, using the real exported functions on the two entry shapes:
+
+| entry shape | `hasExpiredActivationGrace` | `snapshotTtlSeconds` | `healthStatusBucket` |
+|---|---|---|---|
+| pre-fix: expired `transportGraceUntil` | `true` (snapshot refused) | `1` | `warn` |
+| post-fix: `transportGraceExpiredAt` | `false` | `60` | `warn` |
+
+Same bucket in both rows. That identical `warn` is why no functional test could have caught it.
+
+## What Didn't Work
+
+The grace mechanism went through two earlier shapes on PR #8282, each a correct fix for a real
+problem. The first already contained the seed of this bug; the second made it permanent. This was a
+genuine tension, not an oversight.
+
+**Iteration 1 — grace lives only in the verdict snapshot.** The first `RELAY_GATE_UNREACHABLE`
+sighting mints a bounded three-minute deadline (`RELAY_GATEWAY_GATE_TRANSPORT_GRACE_MS`,
+`api/health.js:3780`) during which it buckets as `ok` and sits in compact `pending`, so one Convex
+blip inside a single 60-second window does not page.
+
+Why it was incomplete: health sweeps are *sparse*. With no organic traffic the seed-freshness
+monitor is the only caller, every 15 minutes (`SEED_FRESHNESS_MONITOR_INTERVAL_MS`,
+`api/health.js:3787`, mirroring the `*/15` cron). The streak carry never consulted freshness — it
+reads the predecessor through `parsePreviousRelayGatewayGate`, which is explicitly "the previous
+verdict regardless of freshness" (`api/health.js:3792`). What made the predecessor *gone* was the
+Redis retention TTL: the verdict key was kept for only the freshness window plus the grace, about
+four minutes, against a 15-minute monitor interval. Every run was therefore a "first sighting",
+minted a *fresh* three-minute grace, and parked a permanently dead relay in `pending` forever. A
+grace that restarts is not a grace, it is a mute button.
+
+This iteration already republished an expired deadline — but only during the roughly one minute
+between grace expiry and the key being evicted, so the cache collapse was brief and self-limiting.
+
+**Iteration 2 — retain the verdict long enough to outlive a monitor interval.** The verdict is now
+retained in Redis for the freshness window plus the grace plus one monitor interval plus slack
+(`RELAY_GATEWAY_GATE_PROBE_RETENTION_SECONDS`, `api/health.js:3788-3790`), so the predecessor is
+still there when the next sweep arrives. A later round in the same PR also persisted the follower
+fallback to Redis (`api/health.js:3947-3966`), so a probe owner that crashes without publishing does
+not cost one more monitor interval before a dead relay pages.
+
+That closed the paging hole correctly. The side effect is that the expired deadline now survives for
+the whole outage instead of one minute: during an outage past the three-minute mark,
+`withTransportGrace` kept re-emitting the original, now-expired timestamp under the name
+`transportGraceUntil` — and that name is not inert. It is row 8 of `ENTRY_SOFTENING_DEADLINES`
+(`api/health.js:3607`), the table walked by the two cache readers — `hasExpiredActivationGrace`
+(`api/health.js:3621-3639`, via `entryDeadlineRaw` at `:3610-3613`) and `nearestActivationDeadlineMs`
+(`api/health.js:3647-3665`), which feeds `snapshotTtlSeconds` (`api/health.js:3683-3688`) — and a
+third time by the compact-payload scrubber (`api/health.js:4288-4297`). An expired value in that field means
+"this snapshot promised a softening that has since lapsed" — so it is refused on read
+(`api/health.js:4457`), refused again in the refresh wait loop (`api/health.js:4494-4499`), and the
+next write is clipped to the 1-second floor (`api/health.js:4879`). Correct machinery, correct
+inputs from its own point of view, wrong meaning for the value being fed to it.
+
+No test caught it. No incident revealed it, because it never shipped. Codex found it by reading the
+code in the twelfth and final review round on PR #8282, minutes before the merge.
+
+## Solution
+
+Split the one field into two, by lifetime. The streak anchor keeps riding forward under a name that
+means nothing to the caching machinery; the softening deadline is published **only while it is
+actually in force**.
+
+Before (the merged-branch shape, simplified to share the `deadline` variable with the "after" block
+for comparison; the original inlined the same expression into its return):
+
+```js
+function withTransportGrace(fresh, previous, now) {
+  if (fresh.status !== 'RELAY_GATE_UNREACHABLE') return fresh;
+  const carried = previous?.status === 'RELAY_GATE_UNREACHABLE'
+      && typeof previous.transportGraceUntil === 'string'
+      && Number.isFinite(Date.parse(previous.transportGraceUntil))
+    ? previous.transportGraceUntil
+    : null;
+  const deadline = carried ?? new Date(now + RELAY_GATEWAY_GATE_TRANSPORT_GRACE_MS).toISOString();
+  return { ...fresh, transportGraceUntil: deadline };  // <- republished even when expired
+}
+```
+
+After (`api/health.js:3803-3822`):
+
+```js
+function withTransportGrace(fresh, previous, now) {
+  if (fresh.status !== 'RELAY_GATE_UNREACHABLE') return fresh;
+  // The streak anchor survives its own deadline: after the grace lapses it
+  // rides in `transportGraceExpiredAt`, so an unreachable relay that recovers
+  // and fails again still reads as one continuous outage.
+  const carried = previous?.status === 'RELAY_GATE_UNREACHABLE'
+    ? [previous.transportGraceUntil, previous.transportGraceExpiredAt]
+      .find((raw) => typeof raw === 'string' && Number.isFinite(Date.parse(raw))) ?? null
+    : null;
+  const deadline = carried ?? new Date(now + RELAY_GATEWAY_GATE_TRANSPORT_GRACE_MS).toISOString();
+  // Publish it as a softening deadline ONLY while it is still in force.
+  // `transportGraceUntil` is registered in ENTRY_SOFTENING_DEADLINES, so an
+  // expired one makes hasExpiredActivationGrace reject every snapshot that
+  // carries it and snapshotTtlSeconds clip the TTL to a second — turning a
+  // persistent relay outage into a full Redis sweep and relay probe on every
+  // single health poll, hammering both failing services (#8282 review).
+  return isExpiredDeadline(deadline, now)
+    ? { ...fresh, transportGraceExpiredAt: deadline }
+    : { ...fresh, transportGraceUntil: deadline };
+}
+```
+
+Three properties make this a complete fix rather than a patch:
+
+1. **`transportGraceExpiredAt` is deliberately absent from `ENTRY_SOFTENING_DEADLINES`**
+   (`api/health.js:3599-3608` — eight rows, and it is not one of them; its only appearances in the
+   file are the carry at `:3809` and the publish at `:3820`). It is data, not a promise, so it has no
+   effect on `hasExpiredActivationGrace` or `snapshotTtlSeconds`.
+2. **The carry reads either field** (`api/health.js:3808-3811`), so the streak still never restarts
+   across sweeps — the property iteration 2 existed to guarantee is preserved exactly.
+3. **Classification is untouched.** `healthStatusBucket` already required a *live*
+   `transportGraceUntil` to soften to `ok` (`api/health.js:3207-3212`), and the monitor's
+   `isRelayGateGraceProblem` already required an active bounded deadline
+   (`scripts/check-seed-freshness.mjs:129-132`). Both read an absent `transportGraceUntil` the same
+   way they read an expired one: operational, pages. No downstream consumer had to change.
+
+Both call sites go through the same helper: the owner path (`api/health.js:3985`) and the follower
+fallback path (`api/health.js:3947`).
+
+## Why This Works
+
+The bug is a lifetime collision. One field was doing two jobs whose lifetimes are *opposites*:
+
+| job | who reads it | required lifetime |
+|---|---|---|
+| **state anchor** for a cross-sweep outage streak | `withTransportGrace`'s own carry logic | must **outlive** the deadline — otherwise a 15-minute-apart sweep sees a "first sighting" and restarts the grace |
+| **published softening deadline** | generic machinery: `hasExpiredActivationGrace`, `nearestActivationDeadlineMs` → `snapshotTtlSeconds` | must **not outlive** the deadline — a published deadline that has passed means "this snapshot is stale", by design |
+
+No single field can satisfy both. Honour the first and the cache collapses; honour the second and the
+paging is delayed by a monitor interval. The only resolution is two fields, each with one job and one
+lifetime. Splitting them makes the requirements independent instead of contradictory.
+
+Note also that the generic machinery was never wrong. `isExpiredDeadline` is deliberately fail-closed
+— an unparseable or passed deadline is treated as expired so a pending entry that cannot prove it is
+inside its window is never served warm (`api/health.js:3583-3588`). `snapshotTtlSeconds` floors at
+1 second, never ceilings, so a snapshot cannot outlive a deadline it publishes
+(`api/health.js:3683-3688`). Both did exactly what they promise. They were simply handed a value that
+no longer meant what the field name claims.
+
+## Prevention
+
+**The rule.** When a value has to be carried forward across invocations *and* it is also published in
+a payload that generic machinery interprets, those are two different fields. Name them separately.
+A field name in a shared schema is an interface, and writing a value into it is a call into every
+consumer of that name — including consumers you have never read.
+
+**The diagnostic question for reviewers.** Whenever you see a field being copied from a previous
+record into a new one — especially "so the streak/state survives" — ask:
+
+> Is this field also *registered* anywhere that gives it side effects?
+
+Carrying a field forward for reason A silently inherits every consequence B, C, D that the field's
+name carries elsewhere. In this codebase the concrete check is membership in the softening-deadline
+registry:
+
+```bash
+# List every field whose value has system-wide caching consequences.
+grep -n -A 12 '^const ENTRY_SOFTENING_DEADLINES' api/health.js | grep 'field:'
+```
+
+If the field you are about to carry forward appears in that output, then *any* value you put in it —
+including a stale one copied from a previous record — decides whether the whole health snapshot is
+servable and how long it may be cached. That is a decision about caching, not about your feature.
+
+Two follow-on heuristics worth generalising beyond this repo:
+
+- **A registry of "fields with behaviour" is a coupling surface.** `ENTRY_SOFTENING_DEADLINES`
+  (`api/health.js:3595-3608`) exists to stop near-identical `hasOwnProperty` + `isExpiredDeadline`
+  branches drifting apart, which is a good reason. The cost is that adding one row gives every value
+  of that field system-wide consequences. When you add a row, audit every writer of that field, not
+  just the reader you were building.
+- **A bug whose only symptom is load is invisible to correctness tests.** If a change can alter cache
+  lifetime or upstream call volume, assert on the *TTL and the call count*, not only on the response
+  body. Both regression tests below do exactly that.
+
+**Audit finding: every sibling field was already safe, and for a reason worth copying.** After the
+fix, all seven other rows of the eight in `ENTRY_SOFTENING_DEADLINES` were checked, including every
+assignment site of each field. Each is published only while
+its deadline is live, because each is *re-derived* from current state on every sweep rather than
+copied from a previous record:
+
+| field | publish-time guard |
+|---|---|
+| `staleContentGraceUntil` | `staleContentGraceUntilMs` returns `null` unless `stateBackedUntil > now` (`api/health.js:1937`), and only a non-null result is projected (`:1949`) |
+| `rolloutPendingUntil` | published only for `ROLLOUT_PENDING`, and that status itself requires `now < rolloutPendingUntil` (`api/health.js:2677-2679`, `:2980`) |
+| `contentFreshnessPendingUntil` | comes from `getActiveContentFreshnessActivationWindow(..., now)` (`api/health.js:2773-2782`), which returns `null` outside the window (`api/_content-freshness.js:88-94`) |
+| `workerControlPendingUntil` | `if (now < deadline)` (`api/health.js:3063`) |
+| `chinaCoveragePendingUntil` | `now < pendingUntil` at both publish sites (`api/health.js:3463`, `:3504`) |
+| `containmentUntil` | `now < deadline` in the publish guard (`api/health.js:3320`) |
+| `sourceFailurePendingUntil` | the deadline is minted only while live (`api/health.js:2326-2338`) and projected at `:3034` |
+
+The relay gate was the **only** field that carried a stored deadline forward, and it is the only one
+that hit the trap. That is the generalisation: re-deriving a deadline each sweep is trap-free by
+construction, and the moment a design needs to *carry* one, it has left that safety and needs the
+split above. Note that the stale-content-grace design
+(`docs/plans/2026-09-03-001-fix-stale-content-grace-plan.md`) explicitly calls for republishing a
+stored deadline verbatim on later sweeps; it is safe only because the projection re-checks `> now`.
+Keep that guard if that plan's mechanism is ever extended.
+
+**The regression tests** (`tests/health-relay-gateway-gate.test.mjs`, 31/31 passing on the current
+tree).
+
+End-to-end, at `:289` — "a stall that outlives its grace becomes an operational
+`RELAY_GATE_UNREACHABLE` problem and the grace is carried, not restarted". It seeds a previous window
+whose `transportGraceUntil` has already passed (`:294-299`) and then pins both halves — the split
+field *and* the cache lifetime that was the actual damage:
+
+```js
+assert.equal(entry.transportGraceExpiredAt, expiredGrace, 'the original deadline is carried across windows');
+assert.equal(entry.transportGraceUntil, undefined, 'an expired deadline is never republished as a softening');
+const snapshotWrite = redisCommands.find(([op, key]) => op === 'SET' && key === HEALTH_SNAPSHOT_KEY);
+assert.equal(snapshotWrite[4], String(__testing__.HEALTH_VERDICT_SNAPSHOT_TTL_SECONDS), 'the warning snapshot keeps its full TTL');
+```
+
+(`:309-312`.) Reading the literal Redis `SET ... EX <ttl>` argument is what gives this test teeth — it
+is the one assertion that would have gone red on the pre-fix code, because the status, the bucket and
+the compact payload were all already correct.
+
+Unit, at `:329` — `withTransportGrace` "only decorates unreachable verdicts and restarts after a
+healthy window". The five assertions that pin the split (`:341-350`):
+
+```js
+const elapsed = withTransportGrace({ status: 'RELAY_GATE_UNREACHABLE' }, first, now + RELAY_GATEWAY_GATE_TRANSPORT_GRACE_MS + 1);
+assert.equal(elapsed.transportGraceUntil, undefined);
+assert.equal(elapsed.transportGraceExpiredAt, first.transportGraceUntil);
+// And the expired anchor is itself carried, so the streak never restarts.
+const stillElapsed = withTransportGrace({ status: 'RELAY_GATE_UNREACHABLE' }, elapsed, now + 60 * 60_000);
+assert.equal(stillElapsed.transportGraceExpiredAt, first.transportGraceUntil);
+// A healthy window clears it: the next unreachable sighting is a first one.
+const restarted = withTransportGrace({ status: 'RELAY_GATE_UNREACHABLE' }, { status: 'OK' }, now + 60 * 60_000);
+assert.equal(restarted.transportGraceUntil, new Date(now + 60 * 60_000 + RELAY_GATEWAY_GATE_TRANSPORT_GRACE_MS).toISOString());
+assert.equal(restarted.transportGraceExpiredAt, undefined);
+```
+
+`stillElapsed` is the important one: it proves the fix did not reintroduce iteration 1's bug. An hour
+into the outage the anchor is *still* the original deadline, so the streak is one continuous outage,
+not a fresh sighting.
+
+The follower-fallback test at `:518` closes the loop across the persistence boundary — the follower's
+deadline is written to Redis (`:539`), and the next sweep one monitor interval later reads it back and
+converts it (`:558-561`):
+
+```js
+assert.equal(next.transportGraceExpiredAt, fallback.transportGraceUntil, 'the streak carried past its deadline');
+assert.equal(next.transportGraceUntil, undefined, 'and not as a live softening');
+assert.equal(__testing__.healthStatusBucket(next, monitorNow), 'warn', 'and the expired deadline pages');
+```
+
+**Discovery channel worth institutionalising.** An automated reviewer reading the code found this;
+neither the test suite nor production would have. The Codex review chain on PR #8282 ran twelve
+rounds and this P1 landed in the twelfth, the last one before merge — and it was a finding about the
+fix applied two rounds earlier, not about the original feature. Do not treat a long chain as
+evidence that a review is finished: each fix in a chain is new code that deserves the same
+adversarial read as the original (see the related follow-up, issue #8285, from the same PR's review).
+
+**References:** PR #8282 (merged 2026-09-17) — cite the PR, never the commit SHA; the squash merge
+rewrote every branch SHA. Follow-up issue #8285.
+
+## Related Issues
+
+- **PR #8282** — the source PR. The relay-gateway gate feature, and the six-round review chain in
+  which Codex raised this P1. Merged 2026-09-17.
+- **Issue #8285** — a separate finding from the same review: the scheduled seed-freshness monitor can
+  check out an older `scripts/check-seed-freshness.mjs` than the `/api/health` revision production is
+  already serving, so every newly shipped pending kind pages falsely during the gate window.
+- **Issue #5261** (closed) — the precedent that makes the cost concrete: the `/api/health` sweep was
+  once ~62% of all Redis commands (~36M/day) at roughly 390 commands per poll with no memoization.
+  The snapshot cache this bug disabled is the memoization that fixed it, which is why silently
+  reverting to a per-poll sweep matters.
+- `docs/health-endpoints.mdx` (and `docs/zh/health-endpoints.mdx`) — the operator-facing reference.
+  The `RELAY_GATE_UNREACHABLE` row already narrates this behaviour, including why the streak moves to
+  `transportGraceExpiredAt`. Update both together; the Chinese translation is kept in sync.
+- `docs/solutions/logic-errors/retention-that-outlives-its-own-alarm.md` — the mirror image in the
+  same health-and-freshness family: there a retention window *outlived* its alarm marker and decayed
+  a real outage into silence. Same shape (one temporal value, two consumers needing different
+  lifetimes), opposite polarity. Read both before changing any deadline in `api/health.js`.
+- `docs/solutions/best-practices/a-requirement-and-its-bound-must-share-a-clock.md` — an adjacent
+  shape: two temporal values that silently assume a shared clock and do not have one.
