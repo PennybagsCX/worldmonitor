@@ -1188,8 +1188,8 @@ export class DeckGLMap {
         this.maplibreMap = new DeckCompatibleMap({
           container: fallbackEl,
           style: fallback,
-          center: [preset.longitude, preset.latitude],
-          zoom: preset.zoom,
+          center: center ? [center.lon, center.lat] : [preset.longitude, preset.latitude],
+          zoom: this.state.zoom,
           renderWorldCopies: false,
           attributionControl: false,
           interactive: true,
