@@ -10,7 +10,7 @@ symptoms:
   - "Sentry WORLDMONITOR-125 (2 events, first 2026-09-09) and WORLDMONITOR-12Z (1 event, 2026-09-16) fired `TimeoutError: signal timed out` via `auto.browser.global_handlers.onunhandledrejection`, handled:no, from Chrome/Edge 151-152 on Windows — ~10 events from >=6 IPs across the WORLDMONITOR-125/12Z/11N family"
   - "The innermost frames pointed at `insights-loader.ts:190` `await fetch(...)` and `:204` `})();`, even though that call is wrapped in `try { ... } catch { return null; }` — a rejection should never have escaped there"
   - "The earlier WORLDMONITOR-11N fix (a `.catch` plus `panel_call_rejected` report added to `pending-panel-data.ts` `invokePanelMethod`) was a real bug but not the whole story: 125's captured stack still ran through the now-fixed `invokePanelMethod` frame, and events kept arriving after it shipped"
-  - "The zero-frame `/signal timed out/` `beforeSend` suppression in `src/bootstrap/sentry-init.ts` (guarded by `!hasFirstParty`) should have dropped these events, but `hasFirstParty` read true because the mutated stack carried first-party frame names"
+  - "The `/signal timed out/` `beforeSend` suppression in `src/bootstrap/sentry-init.ts`, which drops only events with no first-party frames (`!hasFirstParty`), should have dropped these events, but `hasFirstParty` read true because the mutated stack carried first-party frame names"
   - "Only the JS-built `DOMException` abort reason from `insights-loader.ts` ever surfaced this way; native `AbortSignal.timeout()` leaks through the same foreign fetch hook parsed to zero frames and were silently (and correctly) dropped, which is why just one call site kept generating issues"
 root_cause: logic_error
 resolution_type: code_fix
@@ -32,7 +32,7 @@ tags:
 
 ## Problem
 
-`src/services/insights-loader.ts` aborted its shared request with a hand-built `DOMException('signal timed out', 'TimeoutError')`. Chromium gives a JS-built DOMException no `stack`. Sentry's fetch wrapper fills in a missing `stack` by writing onto the rejected error object itself. So when a browser extension's `window.fetch` hook leaked an unhandled copy of that rejection, the event carried insights-loader frames. It got past the zero-frame `signal timed out` suppression and showed up as an unhandled first-party rejection from code that visibly catches it.
+`src/services/insights-loader.ts` aborted its shared request with a hand-built `DOMException('signal timed out', 'TimeoutError')`. Chromium gives a JS-built DOMException no `stack`. Sentry's fetch wrapper fills in a missing `stack` by writing onto the rejected error object itself. So when a browser extension's `window.fetch` hook leaked an unhandled copy of that rejection, the event carried insights-loader frames. It got past the `signal timed out` suppression, which drops only events with no first-party frames, and showed up as an unhandled first-party rejection from code that visibly catches it.
 
 ## Symptoms
 
@@ -78,7 +78,7 @@ if (typeof DOMException === 'function') {
 inFlightAbort.abort(reason);
 ```
 
-The stamp is applied on every engine, not only Chromium. Where a JS-built DOMException does get a stack, that stack holds the construction frames, which here are `abortInFlightRequest` called from the `setTimeout` at `src/services/insights-loader.ts:151`. Those frames are first-party too. On Node v24.15.0 in this session, `new DOMException(...).stack` included the calling frames. The brief reports that Firefox behaves the same way.
+The stamp is applied on every engine, not only Chromium. Where a JS-built DOMException does get a stack, that stack holds the construction frames, which here are `abortInFlightRequest` called from the `setTimeout` at `src/services/insights-loader.ts:151`. Those frames are first-party too. On Node v24.15.0 in this session, `new DOMException(...).stack` included the calling frames. This investigation found Firefox's DOMException carries a stack too.
 
 The same PR also fixed a false comment in `src/bootstrap/sentry-init.ts`. It used to say "our shipped code cannot synthesize the literal 'signal timed out'". Our code does build that reason: in insights-loader and in the fallback at `src/services/timeout-signal.ts:40-44`. The new comment (`src/bootstrap/sentry-init.ts:945-956`) names both places.
 
@@ -88,7 +88,7 @@ The whole bug is three facts combined:
 
 1. **Sentry writes onto the error object.** In `@sentry/core` 10.46.0 (`node_modules/@sentry/core/package.json:3`), `instrumentFetch` creates `virtualError = new Error()` when fetch is called (`node_modules/@sentry/core/build/esm/instrument/fetch.js:56`). In the rejection handler it runs `if (isError(error) && error.stack === undefined) { error.stack = virtualError.stack; addNonEnumerableProperty(error, 'framesToPop', 1); }` (`fetch.js:100-106`). That mutates the shared reason object, so anything else holding it sees the backfilled stack.
 2. **One abort reason reaches every hook.** The hook shape reproduced here was `const p = orig(...); p.then(onOk); return p;`. The forked `p.then(onOk)` promise rejects with the same object and has no handler. The original `p` travels up our wrappers to Sentry's outermost wrapper, which backfills the stack during the same microtask turn. `unhandledrejection` fires only after that turn ends, so Sentry's global handler reads a reason that already has insights-loader frames. Production evidence, per this session's pull: one affected user's console breadcrumbs showed two different browser extensions' content scripts each wrapping `window.fetch` (`chrome-extension://<extension-a>/…` calling `chrome-extension://<extension-b>/…` calling our `main-*.js`), with one of them logging that the fetch request had failed. Adding that one hook in the browser reproduction produced the exact production event.
-3. **The suppression only applies to zero-frame events.** `hasFirstParty` is true when any frame not from the SDK comes from a `.ts` file or a non-vendor `/assets/*.js` chunk (`src/bootstrap/sentry-init.ts:468-474`). The `/signal timed out/` drop requires `!hasFirstParty && event.tags?.kind === undefined` (`src/bootstrap/sentry-init.ts:997-1005`).
+3. **The suppression only applies to events with no first-party frames.** It keys on `!hasFirstParty`, not on the total frame count, so frames from a vendor chunk or an extension alone do not stop it. `hasFirstParty` is true when any frame not from the SDK comes from a `.ts` file or a non-vendor `/assets/*.js` chunk (`src/bootstrap/sentry-init.ts:468-474`). The `/signal timed out/` drop requires `!hasFirstParty && event.tags?.kind === undefined` (`src/bootstrap/sentry-init.ts:997-1005`).
 
 A native `AbortSignal.timeout` reason already has `stack === "TimeoutError: signal timed out"` (checked in Chromium in this investigation). That value isn't `undefined`, so the check at `fetch.js:100` skips it, the SDK parses zero frames, and the suppression drops it. That's why only the hand-built reason ever surfaced. Once the loader's reason has the same shape, a leaked rejection is filtered the same way. A first-party failure reported with a `kind` tag still gets through, because the tag exempts it at `src/bootstrap/sentry-init.ts:1003`.
 
@@ -129,6 +129,6 @@ Before the fix this failed because `reason.stack` was `undefined`. After the fix
 
 ## Related Issues
 
-- `docs/solutions/logic-errors/a-suppression-layer-above-beforesend-cannot-see-your-ownership-tag.md`: why `kind` tags exempt the zero-frame gate, and the Chromium probe showing the native header-only `AbortSignal.timeout` stack.
+- `docs/solutions/logic-errors/a-suppression-layer-above-beforesend-cannot-see-your-ownership-tag.md`: why `kind` tags exempt the no-first-party-frames gate, and the Chromium probe showing the native header-only `AbortSignal.timeout` stack.
 - `docs/solutions/best-practices/sentry-noise-filtering-with-stack-gating-and-signature-matching.md`: the `hasFirstParty` stack-gating model this bug slipped past.
 - Sentry WORLDMONITOR-125, WORLDMONITOR-12Z, WORLDMONITOR-11N; PR #8296.
