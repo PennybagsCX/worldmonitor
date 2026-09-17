@@ -33,7 +33,7 @@ describe('built standalone channel management', { skip: shouldSkipBuiltOutput(ht
     visit(resolve(root, 'dist', entry.replace(/^\//, '')));
     const dashboardChunks = [...visited].filter(path => {
       const name = chunkNameFromFileName(basename(path));
-      return name === 'main' || name === 'App' || name?.startsWith('panels-');
+      return name === 'main' || name === 'App' || name === 'panels' || name?.startsWith('panels-');
     });
     assert.deepEqual(dashboardChunks, []);
   });
