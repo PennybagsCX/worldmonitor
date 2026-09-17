@@ -54,8 +54,8 @@ wrong**. Every signal an operator or a test watches stays correct; only volume m
   key's TTL reading 1 instead of 60.
 - **The upstream is not re-probed.** It is tempting to assume the failing relay gets hammered too; it
   does not. The relay verdict has its own independent cache read at the top of
-  `readOrProbeRelayGatewayGate` (`api/health.js:3917-3918`), and `parseCachedRelayGatewayGate`
-  (`api/health.js:3831-3843`) reuses a verdict inside its own 60-second freshness window without
+  `readOrProbeRelayGatewayGate` (`api/health.js:3920-3921`), and `parseCachedRelayGatewayGate`
+  (`api/health.js:3834-3846`) reuses a verdict inside its own 60-second freshness window without
   consulting the grace deadline at all. So whenever a reusable verdict is in the cache, the gateway
   is probed about once a minute however often the health sweep runs. The cadence guarantee is
   exactly that conditional, and two paths leave no reusable verdict behind: a *persisted follower
@@ -127,7 +127,7 @@ regime's accidental escape hatch, making the permanent case the only case.
 retained in Redis for the freshness window plus the grace plus one monitor interval plus slack
 (`RELAY_GATEWAY_GATE_PROBE_RETENTION_SECONDS`, `api/health.js:3788-3790`), so the predecessor is
 still there when the next sweep arrives. A later round in the same PR also persisted the follower
-fallback to Redis (`api/health.js:3962-3975`), so a probe owner that crashes without publishing does
+fallback to Redis (`api/health.js:3965-3978`), so a probe owner that crashes without publishing does
 not cost one more monitor interval before a dead relay pages — but only when some *other* sweep was
 waiting on it. That path runs in `follow()`, which a sweep reaches only by losing the lease race. If
 the sole 15-minute monitor invocation takes the lease and dies before publishing, nothing is written
@@ -143,10 +143,10 @@ During an outage past the three-minute mark,
 (`api/health.js:3607`), the table walked by the two cache readers — `hasExpiredActivationGrace`
 (`api/health.js:3621-3639`, via `entryDeadlineRaw` at `:3610-3613`) and `nearestActivationDeadlineMs`
 (`api/health.js:3647-3665`), which feeds `snapshotTtlSeconds` (`api/health.js:3683-3688`) — and a
-third time by the compact-payload scrubber (`api/health.js:4295-4303`). An expired value in that field means
+third time by the compact-payload scrubber (`api/health.js:4298-4306`). An expired value in that field means
 "this snapshot promised a softening that has since lapsed" — so it is refused on read
-(`api/health.js:4464`), refused again in the refresh wait loop (`api/health.js:4503`), and the
-next write is clipped to the 1-second floor (`api/health.js:4886`). Correct machinery, correct
+(`api/health.js:4467`), refused again in the refresh wait loop (`api/health.js:4506`), and the
+next write is clipped to the 1-second floor (`api/health.js:4889`). Correct machinery, correct
 inputs from its own point of view, wrong meaning for the value being fed to it.
 
 No test caught it. No incident revealed it, because it never shipped. Codex found it by reading the
@@ -229,8 +229,8 @@ Three properties make this a complete fix rather than a patch:
    (`scripts/check-seed-freshness.mjs:129-132`). Both read an absent `transportGraceUntil` the same
    way they read an expired one: operational, pages. No downstream consumer had to change.
 
-Both call sites go through the same helper: the owner path (`api/health.js:3992`) and the follower
-fallback path (`api/health.js:3954`).
+Both call sites go through the same helper: the owner path (`api/health.js:3995`) and the follower
+fallback path (`api/health.js:3957`).
 
 ## Why This Works
 
