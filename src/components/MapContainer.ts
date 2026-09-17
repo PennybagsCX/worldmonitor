@@ -638,6 +638,10 @@ export class MapContainer {
   private handleDeckGLRuntimeFailure(token: number, error: unknown): void {
     if (token !== this.rendererInitToken || !this.useDeckGL) return;
     console.warn('[MapContainer] DeckGL runtime failure, falling back to SVG map', error);
+    const snapshot = this.getState();
+    const center = this.getCenter();
+    this.initialState = snapshot;
+    this.pendingCenter = center ? { ...center, zoom: snapshot.zoom } : null;
     this.deckGLMap?.destroy();
     this.deckGLMap = null;
     this.useDeckGL = false;

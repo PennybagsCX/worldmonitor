@@ -1137,10 +1137,10 @@ export class DeckGLMap {
         : {}),
     });
 
-    const reportFatalBasemapFailure = (error: unknown): void => {
+    const reportFatalBasemapFailure = (error: unknown, center = this.getCenter()): void => {
       const message = error instanceof Error ? error.message : String(error);
       console.warn('[DeckGLMap] Basemap fallback unavailable — handing off to SVG:', message);
-      this.maplibreMap = null;
+      this.pendingCenter = center;
       // Defer so we never destroy() while still inside MapLibre construction /
       // a style-load timer callback (Sentry WORLDMONITOR-133).
       queueMicrotask(() => {
@@ -1151,6 +1151,8 @@ export class DeckGLMap {
 
     const recreateWithFallback = () => {
       if (this.usedFallbackStyle || this.destroyed) return;
+      const center = this.getCenter();
+      this.state.zoom = this.maplibreMap?.getZoom() ?? this.state.zoom;
       // Style-load timeout still fires after webglcontextlost. Rebuilding
       // MapLibre without WebGL2 throws GPUInitializationError as an uncaught
       // window.onerror (Sentry WORLDMONITOR-133). Skip recreate and degrade.
@@ -1179,7 +1181,7 @@ export class DeckGLMap {
       this.maplibreMap = null;
       const fallbackEl = document.getElementById('deckgl-basemap');
       if (!fallbackEl) {
-        reportFatalBasemapFailure(new Error('Missing #deckgl-basemap during fallback recreate'));
+        reportFatalBasemapFailure(new Error('Missing #deckgl-basemap during fallback recreate'), center);
         return;
       }
       try {
@@ -1205,7 +1207,7 @@ export class DeckGLMap {
         // MapLibre throws GPUInitializationError synchronously when WebGL2 is
         // gone (lost context, software renderer revoked, etc.). Catch it so it
         // never reaches window.onerror; MapContainer falls back to SVG.
-        reportFatalBasemapFailure(error);
+        reportFatalBasemapFailure(error, center);
         return;
       }
       this.maplibreMap.on('load', () => {

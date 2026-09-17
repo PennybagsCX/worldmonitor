@@ -110,7 +110,7 @@ describe('map country drag/click guard', () => {
     );
     assert.match(
       fallbackMatch[0],
-      /reportFatalBasemapFailure\(error\)/,
+      /reportFatalBasemapFailure\(error, center\)/,
       'failed fallback construction must hand off via reportFatalBasemapFailure',
     );
   });
