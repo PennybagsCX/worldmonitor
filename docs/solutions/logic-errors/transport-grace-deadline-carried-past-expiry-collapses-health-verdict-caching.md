@@ -26,7 +26,7 @@ A relay-gate outage grace deadline (`transportGraceUntil`) was carried forward i
 verdict so the outage streak would survive sparse health sweeps — but the field is also registered in
 `ENTRY_SOFTENING_DEADLINES` (`api/health.js:3607`), which means republishing it after it expired made
 the generic caching machinery reject every health snapshot on read and write the next one with a
-1-second TTL. For the whole duration of any relay outage lasting past three minutes, `/api/health`
+1-second TTL. Through any relay outage lasting past three minutes, `/api/health`
 would silently lose its 60-second cache and run a full ~390-command Redis sweep on **every single
 poll** — roughly a 390x amplification of health-attributable Redis commands, for as long as the
 outage ran with sweeps arriving inside the verdict's retention window. That is the steady-traffic
@@ -60,7 +60,8 @@ wrong**. Every signal an operator or a test watches stays correct; only volume m
   the health sweep runs. One deliberate exception: a *persisted follower fallback* is stored with
   `probed: false` and rejected by that same parser, because nobody actually probed it — it is a
   predecessor for the streak, not a verdict — so the sweep after one does probe. That exception is
-  bounded by how often a lease owner dies mid-probe, not by poll rate. Either way the damage here is
+  bounded by how often a sweep waits out `followerWaitMs` without a verdict appearing — a crashed
+  owner, but equally a merely slow one — rather than by poll rate. Either way the damage here is
   Redis command volume, not extra load on Convex.
 - Secondary amplification: with the snapshot dying every second, concurrent pollers contend the
   refresh lock, wait out `HEALTH_VERDICT_REFRESH_WAIT_MS` (3 s, `api/health.js:191`), and then fall
@@ -290,10 +291,12 @@ copied from a previous record:
 | `containmentUntil` | `now < deadline` in the publish guard (`api/health.js:3320`) |
 | `sourceFailurePendingUntil` | the deadline is minted only while live (`api/health.js:2326-2338`) and projected at `:3034` |
 
-The relay gate was the **only** field that carried a stored deadline forward, and it is the only one
-that hit the trap. That is the generalisation: re-deriving a deadline each sweep is trap-free by
-construction, and the moment a design needs to *carry* one, it has left that safety and needs the
-split above. One sibling is worth watching for exactly that reason: `staleContentGraceUntil` is
+The relay gate was the **only** field republished without re-checking the value against the clock at
+publish time, and it is the only one that hit the trap. Carrying a stored deadline is not itself the
+error — `staleContentGraceUntil` does exactly that and is safe. The error is carrying one *and*
+trusting it, so the rule is narrower than "do not carry": whatever the source of a deadline, re-check
+it against the clock in the moment you publish it. That sibling is worth watching for exactly that
+reason: `staleContentGraceUntil` is
 designed to claim its deadline once and republish that stored value on every later sweep, which is a
 carry in all but name. It stays safe only because `staleContentGraceUntilMs` re-checks the stored
 anchor against the clock before projecting it (`api/health.js:1937`). Keep that re-check if that
