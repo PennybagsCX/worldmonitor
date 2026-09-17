@@ -14,10 +14,11 @@ const javascript = ts.transpileModule(`class Harness { ${body} }`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
 
-async function createHarness() {
+async function createHarness({ failReplacement = true } = {}) {
   let timeout;
   let constructions = 0;
   let removals = 0;
+  const cameras = [];
   const canvasEvents = {};
   const dependencies = {
     maplibregl: { setWorkerUrl() {} },
@@ -36,9 +37,10 @@ async function createHarness() {
     clearTimeout() {},
     console: { warn() {} },
     DeckCompatibleMap: class {
-      constructor() {
+      constructor(options) {
         constructions++;
-        if (constructions > 1) throw new Error('WebGL2 is required');
+        if (constructions > 1 && failReplacement) throw new Error('WebGL2 is required');
+        cameras.push({ center: options.center, zoom: options.zoom });
       }
       on() {}
       getCanvas() { return { addEventListener: (event, callback) => { canvasEvents[event] = callback; } }; }
@@ -74,6 +76,7 @@ async function createHarness() {
     loseContext: () => canvasEvents.webglcontextlost({ preventDefault() {} }),
     expireStyleLoad: () => timeout(),
     counts: () => ({ constructions, removals }),
+    cameras,
   };
 }
 
@@ -87,6 +90,13 @@ test('context loss retains the primary map until deferred teardown', async () =>
   await Promise.resolve();
   assert.deepEqual(counts(), { constructions: 1, removals: 1 });
   assert.deepEqual(center, { lat: 48, lon: 12 });
+});
+
+test('successful fallback construction preserves the current camera', async () => {
+  const { expireStyleLoad, cameras, counts } = await createHarness({ failReplacement: false });
+  expireStyleLoad();
+  assert.deepEqual(counts(), { constructions: 2, removals: 1 });
+  assert.deepEqual(cameras[1], { center: [12, 48], zoom: 5 });
 });
 
 test('failed fallback construction retains the last center after primary removal', async () => {

@@ -86,7 +86,13 @@ before(async () => {
         export function createMapContainerHarness() {
           const map = Object.create(MapContainer.prototype);
           const internals = {
-            container: { removeEventListener() {} },
+            container: {
+              removeEventListener() {},
+              classList: { remove() {}, add() {} },
+              dataset: {},
+              removeAttribute() {},
+              textContent: '',
+            },
             rendererReady: false,
             rendererReadyWaiters: new Set(),
             rendererDemandRequested: false,
@@ -149,7 +155,7 @@ describe('map viewport runtime lifecycle', () => {
     };
     internals.showRendererShell = () => {};
     let fallback: unknown;
-    internals.initSvgMap = () => {
+    internals.initSvgMap = async () => {
       fallback = { state: internals.initialState, center: internals.pendingCenter };
     };
     const fail = internals.handleDeckGLRuntimeFailure as (token: number, error: unknown) => void;
@@ -160,6 +166,60 @@ describe('map viewport runtime lifecycle', () => {
     assert.deepEqual(fallback, { state: snapshot, center: { lat: 48, lon: 12, zoom: 5 } });
     assert.equal(internals.useDeckGL, false);
     assert.equal(internals.rendererInitToken, 8);
+  });
+
+  it('continues SVG recovery when DeckGL teardown throws', async () => {
+    const { map, internals } = harness.createMapContainerHarness();
+    internals.deckGLMap = {
+      getState: () => internals.initialState, getCenter: () => null,
+      destroy: () => { throw new Error('GPU cleanup failed'); },
+    };
+    internals.showRendererShell = () => {};
+    internals.initSvgMap = async (_message: string, token: number) => {
+      internals.svgMap = {};
+      (internals.markRendererReady as (token: number) => void).call(map, token);
+    };
+    const ready = map.whenRendererReady();
+    (internals.handleDeckGLRuntimeFailure as (token: number, error: unknown) => void)
+      .call(map, 7, new Error('GPU unavailable'));
+    await ready;
+    assert.equal(internals.useDeckGL, false);
+    assert.equal(internals.deckGLMap, null);
+    assert.equal(internals.rendererReady, true);
+  });
+
+  it('settles current and future readiness callers when SVG recovery rejects', async () => {
+    const { map, internals } = harness.createMapContainerHarness();
+    internals.deckGLMap = { getState: () => internals.initialState, getCenter: () => null, destroy() {} };
+    internals.showRendererShell = () => {};
+    const failure = new Error('SVG chunk unavailable');
+    internals.initSvgMap = async () => { throw failure; };
+    const ready = assert.rejects(map.whenRendererReady(), /SVG chunk unavailable/);
+    (internals.handleDeckGLRuntimeFailure as (token: number, error: unknown) => void)
+      .call(map, 7, new Error('GPU unavailable'));
+    await ready;
+    await assert.rejects(map.whenRendererReady(), /SVG chunk unavailable/);
+    assert.equal((internals.container as { textContent: string }).textContent, 'common.unavailable');
+    assert.equal(internals.rendererReady, false);
+    assert.equal((internals.rendererReadyWaiters as Set<unknown>).size, 0);
+  });
+
+  it('ignores an SVG rejection after a newer renderer becomes ready', async () => {
+    const { map, internals } = harness.createMapContainerHarness();
+    internals.deckGLMap = { getState: () => internals.initialState, getCenter: () => null, destroy() {} };
+    internals.showRendererShell = () => {};
+    let rejectFallback!: (error: Error) => void;
+    internals.initSvgMap = () => new Promise<void>((_resolve, reject) => { rejectFallback = reject; });
+    (internals.handleDeckGLRuntimeFailure as (token: number, error: unknown) => void)
+      .call(map, 7, new Error('GPU unavailable'));
+    internals.rendererInitToken = 9;
+    internals.globeMap = {};
+    (internals.markRendererReady as (token: number) => void).call(map, 9);
+    rejectFallback(new Error('stale SVG failure'));
+    await new Promise<void>(resolve => setImmediate(resolve));
+    await map.whenRendererReady();
+    assert.equal(internals.rendererReady, true);
+    assert.equal(internals.rendererInitToken, 9);
   });
 
   it('invalidates delayed agent authority when direct map interaction starts', () => {
