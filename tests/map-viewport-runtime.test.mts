@@ -138,6 +138,30 @@ before(async () => {
 });
 
 describe('map viewport runtime lifecycle', () => {
+  it('preserves the live viewport and layers when DeckGL fails at runtime', () => {
+    const { map, internals } = harness.createMapContainerHarness();
+    const snapshot = { view: 'eu', zoom: 5, pan: { x: 0, y: 0 }, layers: { conflicts: true }, timeRange: '7d' };
+    let removed = false;
+    internals.deckGLMap = {
+      getState: () => { assert.equal(removed, false); return snapshot; },
+      getCenter: () => { assert.equal(removed, false); return { lat: 48, lon: 12 }; },
+      destroy: () => { removed = true; },
+    };
+    internals.showRendererShell = () => {};
+    let fallback: unknown;
+    internals.initSvgMap = () => {
+      fallback = { state: internals.initialState, center: internals.pendingCenter };
+    };
+    const fail = internals.handleDeckGLRuntimeFailure as (token: number, error: unknown) => void;
+    fail.call(map, 6, new Error('stale renderer'));
+    assert.equal(removed, false);
+    fail.call(map, 7, new Error('WebGL unavailable'));
+    assert.equal(removed, true);
+    assert.deepEqual(fallback, { state: snapshot, center: { lat: 48, lon: 12, zoom: 5 } });
+    assert.equal(internals.useDeckGL, false);
+    assert.equal(internals.rendererInitToken, 8);
+  });
+
   it('invalidates delayed agent authority when direct map interaction starts', () => {
     const { map, internals } = harness.createMapContainerHarness();
 
