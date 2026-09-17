@@ -157,7 +157,9 @@ function withTransportGrace(fresh, previous, now) {
   if (fresh.status !== 'RELAY_GATE_UNREACHABLE') return fresh;
   // The streak anchor survives its own deadline: after the grace lapses it
   // rides in `transportGraceExpiredAt`, so an unbroken run of unreachable
-  // verdicts reads as one continuous outage however far apart the sweeps are.
+  // verdicts reads as one continuous outage for as long as the predecessor is
+  // retained (RELAY_GATEWAY_GATE_PROBE_RETENTION_SECONDS); a gap longer than
+  // that evicts it and the next sighting is a first one.
   // Only an unreachable predecessor is carried — any other verdict in between
   // (including OK) clears the anchor, and the next failure is a first
   // sighting that earns a fresh grace.
@@ -186,9 +188,12 @@ Three properties make this a complete fix rather than a patch:
    (`api/health.js:3599-3608` — eight rows, and it is not one of them; its only appearances in the
    file are the carry at `:3809` and the publish at `:3820`). It is data, not a promise, so it has no
    effect on `hasExpiredActivationGrace` or `snapshotTtlSeconds`.
-2. **The carry reads either field** (`api/health.js:3811-3814`), so an unbroken run of unreachable
-   verdicts never restarts its grace however far apart the sweeps are — the property iteration 2
-   existed to guarantee is preserved exactly. The carry is still conditional on the predecessor
+2. **The carry reads either field** (`api/health.js:3813-3816`), so an unbroken run of unreachable
+   verdicts never restarts its grace for as long as the predecessor is retained — the property
+   iteration 2 existed to guarantee is preserved exactly. That retention is finite and deliberately
+   sized: freshness window plus grace plus one monitor interval plus slack, about twenty minutes, so
+   a sweep gap longer than that evicts the predecessor and the next sighting is a first one. The
+   sizing is what makes the guarantee hold at the cadence the monitor actually runs, not forever. The carry is still conditional on the predecessor
    being unreachable, so a healthy verdict in between clears the anchor and the next failure is a
    genuine first sighting; the unit test pins both halves.
 3. **Classification is untouched.** `healthStatusBucket` already required a *live*

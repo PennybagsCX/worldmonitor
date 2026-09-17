@@ -3804,7 +3804,9 @@ function withTransportGrace(fresh, previous, now) {
   if (fresh.status !== 'RELAY_GATE_UNREACHABLE') return fresh;
   // The streak anchor survives its own deadline: after the grace lapses it
   // rides in `transportGraceExpiredAt`, so an unbroken run of unreachable
-  // verdicts reads as one continuous outage however far apart the sweeps are.
+  // verdicts reads as one continuous outage for as long as the predecessor is
+  // retained (RELAY_GATEWAY_GATE_PROBE_RETENTION_SECONDS); a gap longer than
+  // that evicts it and the next sighting is a first one.
   // Only an unreachable predecessor is carried — any other verdict in between
   // (including OK) clears the anchor, and the next failure is a first
   // sighting that earns a fresh grace.
