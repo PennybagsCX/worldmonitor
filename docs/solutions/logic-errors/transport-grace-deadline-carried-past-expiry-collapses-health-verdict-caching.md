@@ -9,8 +9,8 @@ symptoms:
   - "Caught in code review before merge, so these are the symptoms the shipped code would have shown, not an observed incident"
   - "In any relay outage outlasting the 3-minute transport grace, every RELAY_GATE_UNREACHABLE verdict would republish the already-expired transportGraceUntil deadline instead of dropping it"
   - "hasExpiredActivationGrace would reject every one of those snapshots as unservable and snapshotTtlSeconds would clip their Redis TTL to its 1-second floor"
-  - "Every health poll for the duration of the outage would therefore run a full ~390-command Redis sweep instead of one warm read"
-  - "The check's own reported verdict/status stays correct throughout, so no functional test or assertion could catch it"
+  - "Every health poll would therefore run a full ~390-command Redis sweep instead of one warm read, for as long as the outage ran with polling frequent enough to keep the verdict retained"
+  - "The check's own reported verdict, status and compact-payload placement stay correct throughout, so no status or classification assertion can catch it; only an assertion on the published cache lifetime does"
 root_cause: logic_error
 resolution_type: code_fix
 severity: high
@@ -123,7 +123,7 @@ During an outage past the three-minute mark,
 (`api/health.js:3607`), the table walked by the two cache readers — `hasExpiredActivationGrace`
 (`api/health.js:3621-3639`, via `entryDeadlineRaw` at `:3610-3613`) and `nearestActivationDeadlineMs`
 (`api/health.js:3647-3665`), which feeds `snapshotTtlSeconds` (`api/health.js:3683-3688`) — and a
-third time by the compact-payload scrubber (`api/health.js:4288-4297`). An expired value in that field means
+third time by the compact-payload scrubber (`api/health.js:4295-4303`). An expired value in that field means
 "this snapshot promised a softening that has since lapsed" — so it is refused on read
 (`api/health.js:4464`), refused again in the refresh wait loop (`api/health.js:4503`), and the
 next write is clipped to the 1-second floor (`api/health.js:4886`). Correct machinery, correct
