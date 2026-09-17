@@ -152,8 +152,11 @@ After (`api/health.js:3803-3822`):
 function withTransportGrace(fresh, previous, now) {
   if (fresh.status !== 'RELAY_GATE_UNREACHABLE') return fresh;
   // The streak anchor survives its own deadline: after the grace lapses it
-  // rides in `transportGraceExpiredAt`, so an unreachable relay that recovers
-  // and fails again still reads as one continuous outage.
+  // rides in `transportGraceExpiredAt`, so an unbroken run of unreachable
+  // verdicts reads as one continuous outage however far apart the sweeps are.
+  // Only an unreachable predecessor is carried — any other verdict in between
+  // (including OK) clears the anchor, and the next failure is a first
+  // sighting that earns a fresh grace.
   const carried = previous?.status === 'RELAY_GATE_UNREACHABLE'
     ? [previous.transportGraceUntil, previous.transportGraceExpiredAt]
       .find((raw) => typeof raw === 'string' && Number.isFinite(Date.parse(raw))) ?? null
@@ -179,8 +182,11 @@ Three properties make this a complete fix rather than a patch:
    (`api/health.js:3599-3608` — eight rows, and it is not one of them; its only appearances in the
    file are the carry at `:3809` and the publish at `:3820`). It is data, not a promise, so it has no
    effect on `hasExpiredActivationGrace` or `snapshotTtlSeconds`.
-2. **The carry reads either field** (`api/health.js:3808-3811`), so the streak still never restarts
-   across sweeps — the property iteration 2 existed to guarantee is preserved exactly.
+2. **The carry reads either field** (`api/health.js:3811-3814`), so an unbroken run of unreachable
+   verdicts never restarts its grace however far apart the sweeps are — the property iteration 2
+   existed to guarantee is preserved exactly. The carry is still conditional on the predecessor
+   being unreachable, so a healthy verdict in between clears the anchor and the next failure is a
+   genuine first sighting; the unit test pins both halves.
 3. **Classification is untouched.** `healthStatusBucket` already required a *live*
    `transportGraceUntil` to soften to `ok` (`api/health.js:3207-3212`), and the monitor's
    `isRelayGateGraceProblem` already required an active bounded deadline
@@ -242,9 +248,12 @@ Two follow-on heuristics worth generalising beyond this repo:
   branches drifting apart, which is a good reason. The cost is that adding one row gives every value
   of that field system-wide consequences. When you add a row, audit every writer of that field, not
   just the reader you were building.
-- **A bug whose only symptom is load is invisible to correctness tests.** If a change can alter cache
-  lifetime or upstream call volume, assert on the *TTL and the call count*, not only on the response
-  body. Both regression tests below do exactly that.
+- **A bug whose only symptom is load is invisible to correctness tests.** If a change can alter how
+  long a result may be cached, assert on the *published lifetime*, not only on the response body —
+  the end-to-end test below reads the literal `EX` argument of the snapshot write for exactly that
+  reason, and it is the only assertion in the file that would have failed on the pre-fix code. Note
+  what that does and does not cover: it pins the cache lifetime, which is the cause, and neither
+  regression test counts calls. Asserting the downstream call volume would be the stronger test.
 
 **Audit finding: every sibling field was already safe, and for a reason worth copying.** After the
 fix, all seven other rows of the eight in `ENTRY_SOFTENING_DEADLINES` were checked, including every
@@ -342,8 +351,9 @@ rewrote every branch SHA. Follow-up issue #8285.
   The snapshot cache this bug disabled is the memoization that fixed it, which is why silently
   reverting to a per-poll sweep matters.
 - `docs/health-endpoints.mdx` (and `docs/zh/health-endpoints.mdx`) — the operator-facing reference.
-  The `RELAY_GATE_UNREACHABLE` row already narrates this behaviour, including why the streak moves to
-  `transportGraceExpiredAt`. Update both together; the Chinese translation is kept in sync.
+  The `RELAY_GATE_UNREACHABLE` row narrates this behaviour, including why the streak moves to
+  `transportGraceExpiredAt` and why the relay is not re-probed per poll. Update both together; the
+  Chinese translation is kept in sync.
 - `docs/solutions/logic-errors/retention-that-outlives-its-own-alarm.md` — the mirror image in the
   same health-and-freshness family: there a retention window *outlived* its alarm marker and decayed
   a real outage into silence. Same shape (one temporal value, two consumers needing different

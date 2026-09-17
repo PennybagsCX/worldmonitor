@@ -3803,8 +3803,11 @@ function parsePreviousRelayGatewayGate(raw) {
 function withTransportGrace(fresh, previous, now) {
   if (fresh.status !== 'RELAY_GATE_UNREACHABLE') return fresh;
   // The streak anchor survives its own deadline: after the grace lapses it
-  // rides in `transportGraceExpiredAt`, so an unreachable relay that recovers
-  // and fails again still reads as one continuous outage.
+  // rides in `transportGraceExpiredAt`, so an unbroken run of unreachable
+  // verdicts reads as one continuous outage however far apart the sweeps are.
+  // Only an unreachable predecessor is carried — any other verdict in between
+  // (including OK) clears the anchor, and the next failure is a first
+  // sighting that earns a fresh grace.
   const carried = previous?.status === 'RELAY_GATE_UNREACHABLE'
     ? [previous.transportGraceUntil, previous.transportGraceExpiredAt]
       .find((raw) => typeof raw === 'string' && Number.isFinite(Date.parse(raw))) ?? null
