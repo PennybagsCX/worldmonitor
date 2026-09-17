@@ -62,9 +62,13 @@ wrong**. Every signal an operator or a test watches stays correct; only volume m
   fallback*, stored with `probed: false` and rejected by that same parser because nobody actually
   probed it (it is a predecessor for the streak, not a verdict); and a probe whose own publish
   failed or returned an indeterminate result, which returns the observation to its caller without
-  caching it. After either, the next sweep probes. Neither path scales with poll rate — they are
-  driven by lease contention and Redis failures — so "about once a minute" is the normal case
-  rather than a bound. The damage in this bug is Redis command volume regardless.
+  caching it. After either, the next sweep probes. The two behave differently under load, which
+  matters: the fallback path is driven by lease contention and does not scale with poll rate, but a
+  publish that keeps failing caches nothing at all, so every poll finds an empty key and probes —
+  that path does scale with poll rate, and under a Redis fault severe enough to break the publish
+  it degrades to exactly the per-poll relay traffic this paragraph says does not happen. So "about
+  once a minute" describes a healthy Redis, not a bound. The damage in the bug documented here is
+  Redis command volume regardless, because that bug leaves the verdict cache working.
 - Secondary amplification: with the snapshot dying every second, concurrent pollers contend the
   refresh lock, wait out `HEALTH_VERDICT_REFRESH_WAIT_MS` (3 s, `api/health.js:191`), and then fall
   through to their *own* sweep — the exact failure mode `snapshotTtlSeconds`' own doc comment
@@ -161,7 +165,7 @@ function withTransportGrace(fresh, previous, now) {
 }
 ```
 
-After (`api/health.js:3803-3829`):
+After (`api/health.js:3803-3832`):
 
 ```js
 function withTransportGrace(fresh, previous, now) {
@@ -185,8 +189,11 @@ function withTransportGrace(fresh, previous, now) {
   // carries it and snapshotTtlSeconds clip the TTL to a second — turning a
   // persistent relay outage into a full Redis sweep on every single health
   // poll instead of one warm read (#8282 review). The relay itself is not
-  // re-probed at that rate: the verdict has its own freshness window, which
-  // readOrProbeRelayGatewayGate honours before it ever takes the lease.
+  // re-probed at that rate: readOrProbeRelayGatewayGate reuses a cached
+  // verdict inside its own freshness window before it ever takes the lease.
+  // That holds whenever a reusable verdict is in the cache — so not when the
+  // stored record is an unprobed follower fallback, and not when a probe's
+  // own publish failed. Both leave the next sweep to probe again.
   return isExpiredDeadline(deadline, now)
     ? { ...fresh, transportGraceExpiredAt: deadline }
     : { ...fresh, transportGraceUntil: deadline };
@@ -197,7 +204,7 @@ Three properties make this a complete fix rather than a patch:
 
 1. **`transportGraceExpiredAt` is deliberately absent from `ENTRY_SOFTENING_DEADLINES`**
    (`api/health.js:3599-3608` — eight rows, and it is not one of them; its only appearances in the
-   file are the carry at `:3814` and the publish at `:3827`). It is data, not a promise, so it has no
+   file are the carry at `:3814` and the publish at `:3830`). It is data, not a promise, so it has no
    effect on `hasExpiredActivationGrace` or `snapshotTtlSeconds`.
 2. **The carry reads either field** (`api/health.js:3813-3816`), so an unbroken run of unreachable
    verdicts never restarts its grace for as long as the predecessor is retained — the property
