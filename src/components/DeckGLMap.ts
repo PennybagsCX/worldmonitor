@@ -1145,7 +1145,11 @@ export class DeckGLMap {
       // a style-load timer callback (Sentry WORLDMONITOR-133).
       queueMicrotask(() => {
         if (this.destroyed) return;
-        this.onFatalError?.(error);
+        try {
+          this.onFatalError?.(error);
+        } catch (callbackError) {
+          console.warn('[DeckGLMap] Fatal-error callback failed:', callbackError);
+        }
       });
     };
 
