@@ -3821,8 +3821,11 @@ function withTransportGrace(fresh, previous, now) {
   // carries it and snapshotTtlSeconds clip the TTL to a second — turning a
   // persistent relay outage into a full Redis sweep on every single health
   // poll instead of one warm read (#8282 review). The relay itself is not
-  // re-probed at that rate: the verdict has its own freshness window, which
-  // readOrProbeRelayGatewayGate honours before it ever takes the lease.
+  // re-probed at that rate: readOrProbeRelayGatewayGate reuses a cached
+  // verdict inside its own freshness window before it ever takes the lease.
+  // That holds whenever a reusable verdict is in the cache — so not when the
+  // stored record is an unprobed follower fallback, and not when a probe's
+  // own publish failed. Both leave the next sweep to probe again.
   return isExpiredDeadline(deadline, now)
     ? { ...fresh, transportGraceExpiredAt: deadline }
     : { ...fresh, transportGraceUntil: deadline };

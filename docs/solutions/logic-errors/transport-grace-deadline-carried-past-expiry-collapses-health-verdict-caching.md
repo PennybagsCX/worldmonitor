@@ -56,13 +56,15 @@ wrong**. Every signal an operator or a test watches stays correct; only volume m
   does not. The relay verdict has its own independent cache read at the top of
   `readOrProbeRelayGatewayGate` (`api/health.js:3917-3918`), and `parseCachedRelayGatewayGate`
   (`api/health.js:3831-3843`) reuses a verdict inside its own 60-second freshness window without
-  consulting the grace deadline at all. So the gateway is probed about once a minute however often
-  the health sweep runs. One deliberate exception: a *persisted follower fallback* is stored with
-  `probed: false` and rejected by that same parser, because nobody actually probed it — it is a
-  predecessor for the streak, not a verdict — so the sweep after one does probe. That exception is
-  bounded by how often a sweep waits out `followerWaitMs` without a verdict appearing — a crashed
-  owner, but equally a merely slow one — rather than by poll rate. Either way the damage here is
-  Redis command volume, not extra load on Convex.
+  consulting the grace deadline at all. So whenever a reusable verdict is in the cache, the gateway
+  is probed about once a minute however often the health sweep runs. The cadence guarantee is
+  exactly that conditional, and two paths leave no reusable verdict behind: a *persisted follower
+  fallback*, stored with `probed: false` and rejected by that same parser because nobody actually
+  probed it (it is a predecessor for the streak, not a verdict); and a probe whose own publish
+  failed or returned an indeterminate result, which returns the observation to its caller without
+  caching it. After either, the next sweep probes. Neither path scales with poll rate — they are
+  driven by lease contention and Redis failures — so "about once a minute" is the normal case
+  rather than a bound. The damage in this bug is Redis command volume regardless.
 - Secondary amplification: with the snapshot dying every second, concurrent pollers contend the
   refresh lock, wait out `HEALTH_VERDICT_REFRESH_WAIT_MS` (3 s, `api/health.js:191`), and then fall
   through to their *own* sweep — the exact failure mode `snapshotTtlSeconds`' own doc comment
