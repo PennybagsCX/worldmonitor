@@ -1,9 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import { chunkNameFromFileName } from '../scripts/bundle-budgets.mjs';
 import { guardBuiltOutput, shouldSkipBuiltOutput } from './_lib/built-output-guard.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -30,6 +31,10 @@ describe('built standalone channel management', { skip: shouldSkipBuiltOutput(ht
       }
     }
     visit(resolve(root, 'dist', entry.replace(/^\//, '')));
-    assert.deepEqual([...visited].filter(path => /\/(?:main|App|panels-[\w]+)-[^/]+\.js$/.test(path)), []);
+    const dashboardChunks = [...visited].filter(path => {
+      const name = chunkNameFromFileName(basename(path));
+      return name === 'main' || name === 'App' || name?.startsWith('panels-');
+    });
+    assert.deepEqual(dashboardChunks, []);
   });
 });

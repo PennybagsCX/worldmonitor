@@ -7,7 +7,7 @@
   "totalTolerancePct": 0.25,
   "totalToleranceBytes": 16384,
   "total": {
-    "raw": 440172
+    "raw": 440328
   },
   "chunks": {
     "auth-state": {
@@ -51,7 +51,7 @@
       "files": 2
     },
     "main": {
-      "raw": 125722,
+      "raw": 125878,
       "files": 1
     },
     "panels": {
@@ -69,11 +69,11 @@
   },
   "deferred": {
     "total": {
-      "raw": 1364970
+      "raw": 1367200
     },
     "chunks": {
       "App": {
-        "raw": 907359,
+        "raw": 896499,
         "files": 1
       },
       "base": {
@@ -82,6 +82,10 @@
       },
       "cached-risk-scores": {
         "raw": 14907,
+        "files": 1
+      },
+      "checkout": {
+        "raw": 13090,
         "files": 1
       },
       "continuous": {
