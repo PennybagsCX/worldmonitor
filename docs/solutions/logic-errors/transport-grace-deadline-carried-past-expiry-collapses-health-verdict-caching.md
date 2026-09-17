@@ -112,7 +112,11 @@ retained in Redis for the freshness window plus the grace plus one monitor inter
 (`RELAY_GATEWAY_GATE_PROBE_RETENTION_SECONDS`, `api/health.js:3788-3790`), so the predecessor is
 still there when the next sweep arrives. A later round in the same PR also persisted the follower
 fallback to Redis (`api/health.js:3962-3975`), so a probe owner that crashes without publishing does
-not cost one more monitor interval before a dead relay pages.
+not cost one more monitor interval before a dead relay pages — but only when some *other* sweep was
+waiting on it. That path runs in `follow()`, which a sweep reaches only by losing the lease race. If
+the sole 15-minute monitor invocation takes the lease and dies before publishing, nothing is written
+at all and the next run is a first sighting on a fresh grace. The persistence narrows the window; it
+does not close it for a single-caller deployment.
 
 That closed the paging hole correctly. The side effect is that the expired deadline now survives as
 long as sweeps keep arriving inside the retention window rather than for one minute — an outage
@@ -330,9 +334,12 @@ assert.equal(restarted.transportGraceUntil, new Date(now + 60 * 60_000 + RELAY_G
 assert.equal(restarted.transportGraceExpiredAt, undefined);
 ```
 
-`stillElapsed` is the important one: it proves the fix did not reintroduce iteration 1's bug. An hour
-into the outage the anchor is *still* the original deadline, so the streak is one continuous outage,
-not a fresh sighting.
+`stillElapsed` is the important one: it proves the fix did not reintroduce iteration 1's bug. Given a
+predecessor an hour old, the anchor it returns is *still* the original deadline rather than a fresh
+one. Read it for what it is — a unit test of the carry logic, handed its predecessor directly. It
+says nothing about an hour-long outage in the deployed path, where the predecessor has to survive
+Redis retention (about twenty minutes) to be read back at all. The end-to-end test below is what
+covers the persisted round trip, and it does so across one monitor interval, not an hour.
 
 The follower-fallback test at `:519` closes the loop across the persistence boundary — the follower's
 deadline is written to Redis (`:540`), and the next sweep one monitor interval later reads it back and
