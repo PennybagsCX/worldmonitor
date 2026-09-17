@@ -28,8 +28,10 @@ verdict so the outage streak would survive sparse health sweeps — but the fiel
 the generic caching machinery reject every health snapshot on read and write the next one with a
 1-second TTL. For the whole duration of any relay outage lasting past three minutes, `/api/health`
 would silently lose its 60-second cache and run a full ~390-command Redis sweep on **every single
-poll** — roughly a 390x amplification of health-attributable Redis commands, for exactly as long as
-the outage lasted.
+poll** — roughly a 390x amplification of health-attributable Redis commands, for as long as the
+outage ran with sweeps arriving inside the verdict's retention window. That is the steady-traffic
+case, and it is unbounded in the sense that matters: nothing in the mechanism ends it while the
+relay stays down and the endpoint keeps being polled.
 
 Caught by an automated reviewer during the same PR that introduced it, so it never reached
 production. The symptoms below are what the shipped code would have produced, derived from the code
@@ -308,12 +310,12 @@ const snapshotWrite = redisCommands.find(([op, key]) => op === 'SET' && key === 
 assert.equal(snapshotWrite[4], String(__testing__.HEALTH_VERDICT_SNAPSHOT_TTL_SECONDS), 'the warning snapshot keeps its full TTL');
 ```
 
-(`:309-312`.) Reading the literal Redis `SET ... EX <ttl>` argument is what gives this test teeth — it
+(`:310-313`.) Reading the literal Redis `SET ... EX <ttl>` argument is what gives this test teeth — it
 is the one assertion that pins the actual damage, because the status, the bucket and the compact
 payload were all already correct on the pre-fix code.
 
-Unit, at `:329` — `withTransportGrace` "only decorates unreachable verdicts and restarts after a
-healthy window". The five assertions that pin the split (`:341-350`):
+Unit, at `:330` — `withTransportGrace` "only decorates unreachable verdicts and restarts after a
+healthy window". The five assertions that pin the split (`:342-351`):
 
 ```js
 const elapsed = withTransportGrace({ status: 'RELAY_GATE_UNREACHABLE' }, first, now + RELAY_GATEWAY_GATE_TRANSPORT_GRACE_MS + 1);
@@ -332,9 +334,9 @@ assert.equal(restarted.transportGraceExpiredAt, undefined);
 into the outage the anchor is *still* the original deadline, so the streak is one continuous outage,
 not a fresh sighting.
 
-The follower-fallback test at `:518` closes the loop across the persistence boundary — the follower's
-deadline is written to Redis (`:539`), and the next sweep one monitor interval later reads it back and
-converts it (`:558-561`):
+The follower-fallback test at `:519` closes the loop across the persistence boundary — the follower's
+deadline is written to Redis (`:540`), and the next sweep one monitor interval later reads it back and
+converts it (`:559-562`):
 
 ```js
 assert.equal(next.transportGraceExpiredAt, fallback.transportGraceUntil, 'the streak carried past its deadline');
