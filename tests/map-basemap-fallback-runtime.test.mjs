@@ -14,11 +14,12 @@ const javascript = ts.transpileModule(`class Harness { ${body} }`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
 
-async function createHarness({ failReplacement = true } = {}) {
+async function createHarness({ failReplacement = true, scheduleMicrotask = queueMicrotask } = {}) {
   let timeout;
   let constructions = 0;
   let removals = 0;
   const cameras = [];
+  const warnings = [];
   const canvasEvents = {};
   const dependencies = {
     maplibregl: { setWorkerUrl() {} },
@@ -35,7 +36,8 @@ async function createHarness({ failReplacement = true } = {}) {
     window: { removeEventListener() {} },
     setTimeout: callback => { timeout = callback; return 1; },
     clearTimeout() {},
-    console: { warn() {} },
+    queueMicrotask: scheduleMicrotask,
+    console: { warn: (...args) => warnings.push(args) },
     DeckCompatibleMap: class {
       constructor(options) {
         constructions++;
@@ -77,6 +79,7 @@ async function createHarness({ failReplacement = true } = {}) {
     expireStyleLoad: () => timeout(),
     counts: () => ({ constructions, removals }),
     cameras,
+    warnings,
   };
 }
 
@@ -107,4 +110,34 @@ test('failed fallback construction retains the last center after primary removal
   await Promise.resolve();
   assert.deepEqual(counts(), { constructions: 2, removals: 1 });
   assert.deepEqual(center, { lat: 48, lon: 12 });
+});
+
+test('contains a fatal callback exception and reports the callback failure', async () => {
+  const pending = [];
+  const { map, expireStyleLoad, warnings } = await createHarness({
+    scheduleMicrotask: callback => pending.push(callback),
+  });
+  const failure = new Error('Recovery callback failed');
+  const received = [];
+  map.onFatalError = error => { received.push(error.message); throw failure; };
+  expireStyleLoad();
+  assert.equal(pending.length, 1);
+  assert.doesNotThrow(() => pending[0]());
+  assert.deepEqual(received, ['WebGL2 is required']);
+  assert.deepEqual(warnings.at(-1), ['[DeckGLMap] Fatal-error callback failed:', failure]);
+});
+
+test('skips a queued fatal callback after the map is destroyed', async () => {
+  const pending = [];
+  const { map, expireStyleLoad, counts } = await createHarness({
+    scheduleMicrotask: callback => pending.push(callback),
+  });
+  let called = false;
+  map.onFatalError = () => { called = true; };
+  expireStyleLoad();
+  map.destroy();
+  assert.equal(pending.length, 1);
+  pending[0]();
+  assert.equal(called, false);
+  assert.deepEqual(counts(), { constructions: 2, removals: 1 });
 });
