@@ -7,7 +7,7 @@
   "totalTolerancePct": 0.25,
   "totalToleranceBytes": 16384,
   "total": {
-    "raw": 440159
+    "raw": 440172
   },
   "chunks": {
     "auth-state": {
@@ -47,7 +47,7 @@
       "files": 1
     },
     "i18n": {
-      "raw": 139461,
+      "raw": 139474,
       "files": 2
     },
     "main": {
