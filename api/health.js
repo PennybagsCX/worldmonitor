@@ -3814,8 +3814,10 @@ function withTransportGrace(fresh, previous, now) {
   // `transportGraceUntil` is registered in ENTRY_SOFTENING_DEADLINES, so an
   // expired one makes hasExpiredActivationGrace reject every snapshot that
   // carries it and snapshotTtlSeconds clip the TTL to a second — turning a
-  // persistent relay outage into a full Redis sweep and relay probe on every
-  // single health poll, hammering both failing services (#8282 review).
+  // persistent relay outage into a full Redis sweep on every single health
+  // poll instead of one warm read (#8282 review). The relay itself is not
+  // re-probed at that rate: the verdict has its own freshness window, which
+  // readOrProbeRelayGatewayGate honours before it ever takes the lease.
   return isExpiredDeadline(deadline, now)
     ? { ...fresh, transportGraceExpiredAt: deadline }
     : { ...fresh, transportGraceUntil: deadline };
