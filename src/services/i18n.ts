@@ -143,7 +143,7 @@ function preloadEnglishTranslation(attempt = 0): void {
 }
 
 // Initialize i18n
-export async function initI18n(): Promise<void> {
+export async function initI18n({ waitForFullTranslation = false }: { waitForFullTranslation?: boolean } = {}): Promise<void> {
   if (i18next.isInitialized) {
     const currentLanguage = normalizeLanguage(i18next.language || 'en');
     await ensureLanguageLoaded(currentLanguage);
@@ -203,7 +203,8 @@ export async function initI18n(): Promise<void> {
 
   const detectedLanguage = normalizeLanguage(i18next.language || 'en');
   if (detectedLanguage === 'en') {
-    preloadEnglishTranslation();
+    if (waitForFullTranslation) await ensureLanguageLoaded('en');
+    else preloadEnglishTranslation();
   } else {
     await Promise.all([
       ensureLanguageLoaded(detectedLanguage),
