@@ -256,10 +256,11 @@ copied from a previous record:
 The relay gate was the **only** field that carried a stored deadline forward, and it is the only one
 that hit the trap. That is the generalisation: re-deriving a deadline each sweep is trap-free by
 construction, and the moment a design needs to *carry* one, it has left that safety and needs the
-split above. Note that the stale-content-grace design
-(`docs/plans/2026-09-03-001-fix-stale-content-grace-plan.md`) explicitly calls for republishing a
-stored deadline verbatim on later sweeps; it is safe only because the projection re-checks `> now`.
-Keep that guard if that plan's mechanism is ever extended.
+split above. One sibling is worth watching for exactly that reason: `staleContentGraceUntil` is
+designed to claim its deadline once and republish that stored value on every later sweep, which is a
+carry in all but name. It stays safe only because `staleContentGraceUntilMs` re-checks the stored
+anchor against the clock before projecting it (`api/health.js:1937`). Keep that re-check if that
+mechanism is ever extended.
 
 **The regression tests** (`tests/health-relay-gateway-gate.test.mjs`, 31/31 passing on the current
 tree).
