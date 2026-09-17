@@ -1,4 +1,5 @@
-import { STORAGE_KEYS, SITE_VARIANT } from '@/config';
+import { SITE_VARIANT } from '@/config/variant';
+import { STORAGE_KEYS } from '@/config/variants/base';
 import { loadFromStorage, saveToStorage } from '@/utils';
 
 export interface LiveChannel {
