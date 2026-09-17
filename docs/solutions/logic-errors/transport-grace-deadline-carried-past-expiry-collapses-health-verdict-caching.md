@@ -63,12 +63,16 @@ wrong**. Every signal an operator or a test watches stays correct; only volume m
   probed it (it is a predecessor for the streak, not a verdict); and a probe whose own publish
   failed or returned an indeterminate result, which returns the observation to its caller without
   caching it. After either, the next sweep probes. The two behave differently under load, which
-  matters: the fallback path is driven by lease contention and does not scale with poll rate, but a
-  publish that keeps failing caches nothing at all, so every poll finds an empty key and probes —
-  that path does scale with poll rate, and under a Redis fault severe enough to break the publish
-  it degrades to exactly the per-poll relay traffic this paragraph says does not happen. So "about
-  once a minute" describes a healthy Redis, not a bound. The damage in the bug documented here is
-  Redis command volume regardless, because that bug leaves the verdict cache working.
+  matters. The fallback path is driven by lease contention and does not scale with poll rate. A
+  publish that keeps failing caches nothing at all, so every poll finds an empty key and tries —
+  but the single-flight lease (`SET ... NX`, `api/health.js:3932`) admits only one prober at a
+  time, so what actually reaches the relay is bounded by the lease TTL
+  (`RELAY_GATEWAY_GATE_LEASE_TTL_SECONDS`, `api/health.js:3882`) rather than by poll rate. That is
+  worse than the once-per-freshness-window normal case and much better than per-poll: a sustained
+  publish fault raises relay traffic to roughly one probe per lease, with every other sweep
+  following. So "about once a minute" describes a healthy Redis, and the single-flight lease is
+  what keeps even the unhealthy case bounded. The damage in the bug documented here is Redis
+  command volume regardless, because that bug leaves the verdict cache working.
 - Secondary amplification: with the snapshot dying every second, concurrent pollers contend the
   refresh lock, wait out `HEALTH_VERDICT_REFRESH_WAIT_MS` (3 s, `api/health.js:191`), and then fall
   through to their *own* sweep — the exact failure mode `snapshotTtlSeconds`' own doc comment
