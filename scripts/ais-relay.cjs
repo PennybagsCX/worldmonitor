@@ -71,6 +71,8 @@ const {
 const {
   createClassifyChunk,
   fetchJevLabel,
+  jevApiKey,
+  isHeldJevAlert,
   shouldPublishClassifiedAlert,
   classifyCacheValue,
   countLabelSource,
@@ -4664,12 +4666,11 @@ function relayComputeImportanceScore(level, source, corroborationCount, publishe
   );
 }
 
-const CLASSIFY_VALID_LEVELS = ['critical', 'high', 'medium', 'low', 'info'];
-const CLASSIFY_VALID_CATEGORIES = [
-  'conflict', 'protest', 'disaster', 'diplomatic', 'economic',
-  'terrorism', 'cyber', 'health', 'environmental', 'military',
-  'crime', 'infrastructure', 'tech', 'general',
-];
+// One list for the LLM validator below and the Jev criteria (shared/jev-classify.js).
+const {
+  THREAT_LEVELS: CLASSIFY_VALID_LEVELS,
+  THREAT_CATEGORIES: CLASSIFY_VALID_CATEGORIES,
+} = require('../shared/jev-classify.js');
 
 const CLASSIFY_SYSTEM_PROMPT = `You classify news headlines by threat level and category.
 Return ONLY a JSON array, no other text.
@@ -4861,7 +4862,10 @@ function classifyFetchLlmSingle(titles, _apiKey, apiUrl, model, headers, extraBo
         { role: 'user', content: prompt },
       ],
       temperature: 0,
-      max_tokens: titles.length * 40,
+      // Floor of 200: with Jev labelling most titles, the LLM often gets one or
+      // two leftovers, and 40 tokens truncates the reasoning-model fallback
+      // mid-JSON (measured in classify-event.ts: 0/8 valid at 50, 8/8 at 200).
+      max_tokens: Math.max(titles.length * 40, 200),
       ...extraBody,
     });
 
@@ -4915,7 +4919,7 @@ async function classifyFetchLlm(titles, maxTextChars = 200) {
 
 // Jev labels digest titles first when TYPESAFE_API_KEY is set; unset, this IS classifyFetchLlm.
 const classifyChunk = createClassifyChunk({
-  fetchJevLabel: (title, maxTextChars) => fetchJevLabel(title, maxTextChars, { apiKey: process.env.TYPESAFE_API_KEY }),
+  fetchJevLabel: (title, maxTextChars) => fetchJevLabel(title, maxTextChars, { apiKey: jevApiKey() }),
   fetchLlm: classifyFetchLlm,
 });
 
@@ -5026,7 +5030,7 @@ async function seedClassifyForVariant(variant, seenTitles) {
 
   let classified = 0;
   let skipped = 0;
-  const byProvider = { jev: 0, llm: 0 };
+  const byProvider = { jev: 0, llm: 0, held: 0 };
 
   for (let b = 0; b < misses.length; b += CLASSIFY_BATCH_SIZE) {
     const chunk = misses.slice(b, b + CLASSIFY_BATCH_SIZE);
@@ -5052,6 +5056,10 @@ async function seedClassifyForVariant(variant, seenTitles) {
       await upstashSet(classifyCacheKey(chunk[idx]), classifyCacheValue(entry, level, category, Date.now()), CLASSIFY_CACHE_TTL);
       classified++;
       countLabelSource(byProvider, entry);
+      if (isHeldJevAlert({ ...entry, l: level })) {
+        byProvider.held += 1;
+        console.log(`[Classify] Jev ${level} held below the alert gate (pAlert ${Number(entry.pAlert).toFixed(2)}): ${chunk[idx].slice(0, 80)}`);
+      }
       // Attribute newly classified title to country stats (global dedup via seenTitles)
       if (!seenTitles.has(chunk[idx])) {
         seenTitles.add(chunk[idx]);
@@ -5130,7 +5138,7 @@ async function seedClassify() {
   classifyInFlight = true;
   const t0 = Date.now();
   try {
-    const hasAnyProvider = !!process.env.TYPESAFE_API_KEY || CLASSIFY_LLM_PROVIDERS.some((p) => !!process.env[p.envKey]);
+    const hasAnyProvider = !!jevApiKey() || CLASSIFY_LLM_PROVIDERS.some((p) => !!process.env[p.envKey]);
     if (!hasAnyProvider) {
       console.log('[Classify] Skipped — no classifier keys configured');
       return;
@@ -5159,7 +5167,7 @@ async function seedClassify() {
 
     let totalClassified = 0;
     let totalSkipped = 0;
-    const totalByProvider = { jev: 0, llm: 0 };
+    const totalByProvider = { jev: 0, llm: 0, held: 0 };
     let fetchOk = 0;
     let fetchFailed = 0;
     const mergedByCountry = {};
@@ -5174,6 +5182,7 @@ async function seedClassify() {
         totalSkipped += stats.skipped;
         totalByProvider.jev += stats.byProvider?.jev ?? 0;
         totalByProvider.llm += stats.byProvider?.llm ?? 0;
+        totalByProvider.held += stats.byProvider?.held ?? 0;
         console.log(`[Classify] ${CLASSIFY_VARIANTS[v]}: ${stats.total} titles, ${stats.classified} classified, ${stats.skipped} skipped`);
         for (const [code, counts] of Object.entries(stats.byCountry || {})) {
           if (!mergedByCountry[code]) mergedByCountry[code] = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
@@ -5198,7 +5207,7 @@ async function seedClassify() {
     }
 
     await upstashSet('seed-meta:classify', { fetchedAt: Date.now(), recordCount: totalClassified, byProvider: { ...totalByProvider, skipped: totalSkipped } }, 604800);
-    console.log(`[Classify] Done in ${((Date.now() - t0) / 1000).toFixed(1)}s — ${totalClassified} classified (jev ${totalByProvider.jev}, llm ${totalByProvider.llm}), ${totalSkipped} skipped`);
+    console.log(`[Classify] Done in ${((Date.now() - t0) / 1000).toFixed(1)}s — ${totalClassified} classified (jev ${totalByProvider.jev}, llm ${totalByProvider.llm}, jev alerts held ${totalByProvider.held}), ${totalSkipped} skipped`);
   } catch (e) {
     console.warn('[Classify] Seed error:', e?.message || e);
   } finally {
@@ -5212,7 +5221,7 @@ async function startClassifySeedLoop() {
     return;
   }
   const activeProviders = CLASSIFY_LLM_PROVIDERS.filter((p) => !!process.env[p.envKey]).map((p) => p.name);
-  if (process.env.TYPESAFE_API_KEY) activeProviders.unshift('jev');
+  if (jevApiKey()) activeProviders.unshift('jev');
   console.log(`[Classify] Seed loop starting (interval ${CLASSIFY_SEED_INTERVAL_MS / 1000 / 60}min, providers:${activeProviders.length ? activeProviders.join(',') : 'none'})`);
   startBootSeedLoop('Classify', 'seed-meta:classify', CLASSIFY_SEED_INTERVAL_MS, seedClassify, (e) => console.warn('[Classify] Initial seed error:', e?.message || e), (e) => console.warn('[Classify] Seed error:', e?.message || e));
 }

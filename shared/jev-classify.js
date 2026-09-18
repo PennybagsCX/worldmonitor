@@ -11,6 +11,24 @@
 export const JEV_MODEL = 'jev-1.13.0';
 export const JEV_ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
 
+// P(critical) + P(high) a Jev-labelled alert needs before it alerts anyone:
+// 83% precision at 89% recall on the judged set
+// (tests/fixtures/jev-classify-golden-2026-09-18.json), against 46% for the
+// ungated LLM labels. In-sample on n=27 alert-level titles (26 high, 1
+// critical): it trades alert recall 26/27 -> 24/27 for that precision.
+// `scripts/eval-jev-classify.mjs --golden <fixture> --replay` prints the sweep.
+export const JEV_NOTIFY_MIN_P_ALERT = 0.7;
+
+/**
+ * Whether a critical/high label may raise an alert. One rule for the relay's
+ * rss_alert publish and for digest readers of the cached row: an LLM label
+ * (no `src`) always may; a Jev label needs a numeric pAlert at the gate.
+ */
+export function jevGateAllowsAlert({ src, pAlert }) {
+  if (src !== 'jev') return true;
+  return typeof pAlert === 'number' && pAlert >= JEV_NOTIFY_MIN_P_ALERT;
+}
+
 export const THREAT_LEVELS = ['critical', 'high', 'medium', 'low', 'info'];
 export const THREAT_CATEGORIES = [
   'conflict', 'protest', 'disaster', 'diplomatic', 'economic',
@@ -58,6 +76,10 @@ export const CATEGORY_CRITERIA = {
   tech: 'Technology products, AI, software, science, space.',
   general: 'None of the other topics fit.',
 };
+
+// TypeSafe documents non-English scripts as weaker, and the judged set held
+// none, so callers keep these titles off Jev until they are measured.
+export const hasNonLatinLetters = (title) => /(?=\p{L})\P{Script=Latin}/u.test(title);
 
 export function sanitizeHeadline(title, maxTextChars = 200) {
   return String(title).replace(/[\n\r]/g, ' ').slice(0, maxTextChars).trim();
@@ -114,6 +136,10 @@ export function parseJevAnswers(body, count) {
     const category = readChoice(answers[`c${i}`], THREAT_CATEGORIES);
     if (!level || !category) continue;
     const p = level.probabilities;
+    // A level without its own probability is a response shape this parser does
+    // not understand. Dropping it sends the title to the fallback, where reading
+    // pAlert as 0 would instead cache an alert level that can never publish.
+    if (!Number.isFinite(Number(p[level.choice]))) continue;
     labels.push({
       i,
       l: level.choice,

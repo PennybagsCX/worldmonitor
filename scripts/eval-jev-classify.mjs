@@ -11,11 +11,13 @@
  * --golden <file> scores against a saved judged set instead (no Redis needed). Rerun it
  * whenever JEV_MODEL or the criteria change:
  *   node --env-file=.env.local scripts/eval-jev-classify.mjs --golden tests/fixtures/jev-classify-golden-2026-09-18.json --shapes single
+ * Add --capture to write that run's Jev outputs back into the golden file, so the
+ * alert-gate sweep stays checkable without a paid call (--replay scores them offline).
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import {
-  JEV_ENDPOINT, THREAT_LEVELS, buildJevRequest, parseJevAnswers,
+  JEV_ENDPOINT, JEV_MODEL, THREAT_LEVELS, buildJevRequest, parseJevAnswers, hasNonLatinLetters,
 } from '../shared/jev-classify.js';
 
 const args = Object.fromEntries(
@@ -32,7 +34,7 @@ const SINGLE_CONCURRENCY = 25;
 const USD_PER_M_INPUT = 0.042;
 
 const { TYPESAFE_API_KEY, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN } = process.env;
-const required = args.golden ? { TYPESAFE_API_KEY } : { TYPESAFE_API_KEY, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN };
+const required = args.replay ? {} : args.golden ? { TYPESAFE_API_KEY } : { TYPESAFE_API_KEY, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN };
 for (const [k, v] of Object.entries(required)) {
   if (!v) { console.error(`missing ${k}`); process.exit(2); }
 }
@@ -42,6 +44,7 @@ async function redis(command) {
     method: 'POST',
     headers: { Authorization: `Bearer ${UPSTASH_REDIS_REST_TOKEN}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(command),
+    signal: AbortSignal.timeout(30_000),
   });
   if (!r.ok) throw new Error(`redis ${command[0]} HTTP ${r.status}`);
   return (await r.json()).result;
@@ -69,7 +72,8 @@ async function loadLabelledTitles() {
     const hits = await redis(['MGET', ...chunk.map(cacheKey)]);
     chunk.forEach((title, j) => {
       const hit = parseMaybe(hits[j]);
-      if (hit && THREAT_LEVELS.includes(hit.level) && hit.category) {
+      // Once the relay runs Jev-first the cache holds Jev's own labels; they are not an LLM reference.
+      if (hit && hit.src !== 'jev' && THREAT_LEVELS.includes(hit.level) && hit.category) {
         labelled.push({ title, variant: titles.get(title), llm: { l: hit.level, c: hit.category } });
       }
     });
@@ -82,7 +86,7 @@ async function callJev(titles) {
   for (let attempt = 0; ; attempt++) {
     const r = await fetch(JEV_ENDPOINT, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${TYPESAFE_API_KEY}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${TYPESAFE_API_KEY}`, 'Content-Type': 'application/json', 'User-Agent': 'WorldMonitor-Eval/1.0' },
       body: JSON.stringify(buildJevRequest(titles)),
       signal: AbortSignal.timeout(60_000),
     }).catch((e) => ({ ok: false, status: 0, text: async () => String(e) }));
@@ -121,7 +125,6 @@ async function runShape(shape, rows) {
 const pct = (n, d) => (d ? Math.round((1000 * n) / d) / 10 : 0);
 const quantile = (xs, q) => { const s = [...xs].sort((a, b) => a - b); return s.length ? Math.round(s[Math.min(s.length - 1, Math.floor(q * s.length))]) : 0; };
 const isAlert = (l) => l === 'critical' || l === 'high';
-const nonLatin = (t) => /(?=\p{L})\P{Script=Latin}/u.test(t);
 
 function score(rows, out, calls, wallMs) {
   const answered = rows.map((r, i) => ({ ...r, jev: out[i] })).filter((r) => r.jev);
@@ -145,15 +148,22 @@ function score(rows, out, calls, wallMs) {
     };
   });
 
+  // The relay's paging gate (JEV_NOTIFY_MIN_P_ALERT): publish a Jev alert only at pAlert >= tau.
+  const alertGateSweep = [0, 0.5, 0.6, 0.7, 0.8, 0.9].map((tau) => {
+    const published = answered.filter((r) => isAlert(r.jev.l) && r.jev.pAlert >= tau);
+    const truePos = published.filter((r) => isAlert(r.llm.l)).length;
+    return { tau, published: published.length, precisionPct: pct(truePos, published.length), recallPct: pct(truePos, llmAlerts.length) };
+  });
+
   const tokens = calls.reduce((n, c) => n + c.tokens, 0);
-  const foreign = answered.filter((r) => nonLatin(r.title));
+  const foreign = answered.filter((r) => hasNonLatinLetters(r.title));
   return {
     titles: rows.length,
     answered: answered.length,
     callErrors: calls.filter((c) => c.error).map((c) => c.error).slice(0, 3),
     levelAgreePct: pct(answered.filter((r) => r.jev.l === r.llm.l).length, answered.length),
     levelWithinOnePct: pct(within1.length, answered.length),
-    categoryAgreePct: pct(answered.filter((r) => r.jev.c === r.llm.c).length, answered.length),
+    categoryAgreePct: answered.some((r) => r.llm.c) ? pct(answered.filter((r) => r.jev.c === r.llm.c).length, answered.length) : null,
     alertRecallPct: pct(llmAlerts.filter((r) => isAlert(r.jev.l)).length, llmAlerts.length),
     alertPrecisionPct: pct(jevAlerts.filter((r) => isAlert(r.llm.l)).length, jevAlerts.length),
     llmAlerts: llmAlerts.length,
@@ -165,6 +175,7 @@ function score(rows, out, calls, wallMs) {
     usdPer1kTitles: Math.round((tokens / rows.length) * 1000 * (USD_PER_M_INPUT / 1e6) * 1e5) / 1e5,
     confusionLlmRowsJevCols: confusion,
     sweep,
+    alertGateSweep,
     perTitle: answered.map((r) => ({ title: r.title, llm: r.llm.l, jev: r.jev.l, conf: r.jev.levelConf, pAlert: r.jev.pAlert })),
     alertDisagreements: answered
       .filter((r) => isAlert(r.jev.l) !== isAlert(r.llm.l))
@@ -176,7 +187,7 @@ function mean(rs) { return rs.length ? Math.round((100 * rs.reduce((n, r) => n +
 
 function loadGolden(file) {
   const { rows: golden } = JSON.parse(fs.readFileSync(file, 'utf8'));
-  // The reference label is the judge's; the category was not judged, so it carries the LLM's.
+  // The reference label is the judge's. Categories were not judged, so category agreement is not scored.
   return { digestTitles: golden.length, labelled: golden.map((g) => ({ title: g.title, variant: 'golden', llm: { l: g.judge, c: null } })) };
 }
 
@@ -185,16 +196,28 @@ const rows = labelled.slice(0, LIMIT);
 console.error(`digest titles=${digestTitles} with LLM label=${labelled.length} evaluating=${rows.length}`);
 if (rows.length === 0) process.exit(1);
 
-const report = { model: buildJevRequest(['x']).model, variants: VARIANTS, digestTitles, labelled: labelled.length, shapes: {} };
+const golden = args.golden ? JSON.parse(fs.readFileSync(args.golden, 'utf8')) : null;
+const report = { model: JEV_MODEL, variants: VARIANTS, digestTitles, labelled: labelled.length, shapes: {} };
 for (const shape of SHAPES) {
-  const { out, calls, wallMs } = await runShape(shape, rows);
+  const { out, calls, wallMs } = args.replay
+    ? { out: golden.rows.slice(0, rows.length).map((g) => g.jev ?? null), calls: [], wallMs: 0 }
+    : await runShape(shape, rows);
+  if (args.capture && golden && shape === 'single') {
+    golden.jevModel = report.model;
+    golden.rows.forEach((g, i) => {
+      const j = out[i];
+      g.jev = j ? { l: j.l, c: j.c, levelConf: j.levelConf, pAlert: Math.round(j.pAlert * 1000) / 1000 } : null;
+    });
+    fs.writeFileSync(args.golden, `${JSON.stringify(golden, null, 1)}\n`);
+  }
   report.shapes[shape] = score(rows, out, calls, wallMs);
 }
 if (args.out) fs.writeFileSync(args.out, JSON.stringify(report, null, 2));
 for (const [shape, s] of Object.entries(report.shapes)) {
-  const { confusionLlmRowsJevCols, sweep, alertDisagreements, perTitle, ...head } = s;
+  const { confusionLlmRowsJevCols, sweep, alertGateSweep, alertDisagreements, perTitle, ...head } = s;
   console.log(`\n=== ${shape} ===`);
   console.log(JSON.stringify(head, null, 1));
   console.table(confusionLlmRowsJevCols);
   console.table(sweep);
+  console.table(alertGateSweep);
 }

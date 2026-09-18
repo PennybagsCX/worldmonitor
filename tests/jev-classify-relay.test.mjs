@@ -1,22 +1,25 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 
 const require = createRequire(import.meta.url);
 const {
   createClassifyChunk, fetchJevLabel, shouldPublishClassifiedAlert, classifyCacheValue,
-  countLabelSource, JEV_NOTIFY_MIN_P_ALERT,
+  countLabelSource, isHeldJevAlert, jevApiKey, JEV_NOTIFY_MIN_P_ALERT,
 } = require('../scripts/lib/jev-classify-relay.cjs');
 
 const jevLabel = (l, pAlert = 0, levelConf = 0.9) => ({ l, c: 'general', levelConf, pAlert });
 
-function harness({ env = { TYPESAFE_API_KEY: 'k' }, jev = async () => jevLabel('low'), llm = async (titles) => titles.map((_, i) => ({ i, l: 'medium', c: 'economic' })) } = {}) {
-  const calls = { jev: [], llm: [] };
+function harness({ env = { TYPESAFE_API_KEY: 'k' }, jev = async () => jevLabel('low'), llm = async (titles) => titles.map((_, i) => ({ i, l: 'medium', c: 'economic' })), now } = {}) {
+  const calls = { jev: [], llm: [], warn: [] };
   const classifyChunk = createClassifyChunk({
     env,
     fetchJevLabel: async (title, maxTextChars) => { calls.jev.push({ title, maxTextChars }); return jev(title); },
     fetchLlm: async (titles, maxTextChars) => { calls.llm.push({ titles, maxTextChars }); return llm(titles); },
-    warn: () => {},
+    warn: (msg) => calls.warn.push(msg),
+    now,
   });
   return { classifyChunk, calls };
 }
@@ -88,7 +91,53 @@ describe('createClassifyChunk', () => {
       jev: async () => { inFlight++; peak = Math.max(peak, inFlight); await new Promise((r) => setTimeout(r, 2)); inFlight--; return jevLabel('info'); },
     });
     await classifyChunk(Array.from({ length: 50 }, (_, i) => `t${i}`));
-    assert.ok(peak > 1 && peak <= 16, `peak ${peak}`);
+    assert.ok(peak > 1 && peak <= 6, `peak ${peak}`);
+  });
+
+  it('treats a whitespace-only key as unset', async () => {
+    const { classifyChunk, calls } = harness({ env: { TYPESAFE_API_KEY: '  ' } });
+    await classifyChunk(['a']);
+    assert.equal(calls.jev.length, 0);
+    assert.equal(jevApiKey({ TYPESAFE_API_KEY: ' k ' }), 'k');
+    assert.equal(jevApiKey({}), '');
+  });
+
+  it('never lets an LLM entry pass itself off as a Jev label', async () => {
+    const { classifyChunk } = harness({ jev: async () => null, llm: async () => [{ i: 0, l: 'high', c: 'conflict', src: 'jev', pAlert: 0 }] });
+    assert.deepEqual(await classifyChunk(['a']), [{ i: 0, l: 'high', c: 'conflict' }]);
+  });
+
+  it('pauses Jev after a chunk it answered none of, then resumes after the cooldown', async () => {
+    let clock = 1_000;
+    let jevUp = false;
+    const { classifyChunk, calls } = harness({ now: () => clock, jev: async () => (jevUp ? jevLabel('low') : null) });
+    const chunk = ['a', 'b', 'c', 'd', 'e'];
+    await classifyChunk(chunk);
+    assert.equal(calls.jev.length, 5);
+    assert.equal(calls.warn.length, 1);
+    jevUp = true;
+    await classifyChunk(chunk);
+    assert.equal(calls.jev.length, 5, 'paused: the second chunk must not reach Jev');
+    clock += 10 * 60 * 1000;
+    const out = await classifyChunk(chunk);
+    assert.equal(calls.jev.length, 10);
+    assert.ok(out.every((e) => e.src === 'jev'));
+  });
+
+  it('does not pause or warn for a chunk Jev was never asked about', async () => {
+    const { classifyChunk, calls } = harness();
+    await classifyChunk(Array.from({ length: 6 }, () => 'الدفاع المدني'));
+    assert.equal(calls.warn.length, 0);
+    await classifyChunk(['plain english']);
+    assert.equal(calls.jev.length, 1);
+  });
+
+  it('does not pause on a partial failure', async () => {
+    const { classifyChunk, calls } = harness({ jev: async (t) => (t === 'a' ? jevLabel('low') : null) });
+    await classifyChunk(['a', 'b', 'c', 'd', 'e', 'f']);
+    await classifyChunk(['a']);
+    assert.equal(calls.jev.length, 7);
+    assert.equal(calls.warn.length, 0);
   });
 });
 
@@ -105,6 +154,24 @@ describe('shouldPublishClassifiedAlert', () => {
   });
 });
 
+describe('JEV_NOTIFY_MIN_P_ALERT against the judged set', () => {
+  // Jev outputs captured by `scripts/eval-jev-classify.mjs --golden <fixture> --capture`.
+  const { rows } = JSON.parse(readFileSync(new URL('./fixtures/jev-classify-golden-2026-09-18.json', import.meta.url), 'utf8'));
+  const isAlert = (l) => l === 'critical' || l === 'high';
+
+  it('pages at >= 80% precision and >= 85% recall, where the ungated LLM labels page at under 50%', () => {
+    const judged = rows.filter((r) => r.jev);
+    assert.ok(judged.length >= 250);
+    const truth = judged.filter((r) => isAlert(r.judge)).length;
+    const paged = judged.filter((r) => shouldPublishClassifiedAlert({ l: r.jev.l, src: 'jev', pAlert: r.jev.pAlert }));
+    const hits = paged.filter((r) => isAlert(r.judge)).length;
+    assert.ok(hits / paged.length >= 0.8, `precision ${hits}/${paged.length}`);
+    assert.ok(hits / truth >= 0.85, `recall ${hits}/${truth}`);
+    const llmPaged = judged.filter((r) => isAlert(r.llm));
+    assert.ok(llmPaged.filter((r) => isAlert(r.judge)).length / llmPaged.length < 0.5);
+  });
+});
+
 describe('classifyCacheValue', () => {
   it('keeps the LLM record shape byte-compatible', () => {
     assert.deepEqual(classifyCacheValue({ l: 'high', c: 'conflict' }, 'high', 'conflict', 5), { level: 'high', category: 'conflict', timestamp: 5 });
@@ -113,8 +180,17 @@ describe('classifyCacheValue', () => {
   it('adds provenance to a Jev record', () => {
     assert.deepEqual(
       classifyCacheValue({ src: 'jev', conf: 0.81234, pAlert: 0.9 }, 'high', 'conflict', 5),
-      { level: 'high', category: 'conflict', timestamp: 5, src: 'jev', conf: 0.81 },
+      { level: 'high', category: 'conflict', timestamp: 5, src: 'jev', conf: 0.81, pAlert: 0.9 },
     );
+  });
+});
+
+describe('isHeldJevAlert', () => {
+  it('is true only for a Jev alert level the gate refused', () => {
+    assert.equal(isHeldJevAlert({ l: 'high', src: 'jev', pAlert: 0.55 }), true);
+    assert.equal(isHeldJevAlert({ l: 'high', src: 'jev', pAlert: 0.9 }), false);
+    assert.equal(isHeldJevAlert({ l: 'medium', src: 'jev', pAlert: 0.1 }), false);
+    assert.equal(isHeldJevAlert({ l: 'high' }), false);
   });
 });
 
@@ -140,6 +216,7 @@ describe('fetchJevLabel', () => {
     assert.equal(label.l, 'high');
     assert.ok(Math.abs(label.pAlert - 0.9) < 1e-9);
     assert.equal(seen.init.headers.Authorization, 'Bearer k');
+    assert.match(seen.init.headers['User-Agent'], /WorldMonitor/);
     assert.deepEqual(JSON.parse(seen.init.body).state, { headline: 'Title' });
   });
 
@@ -151,11 +228,92 @@ describe('fetchJevLabel', () => {
     assert.equal(n, 2);
   });
 
+  it('waits out a short Retry-After and gives up on a long one without retrying', async () => {
+    const throttled = (seconds) => ({ ok: false, status: 429, headers: { get: (h) => (h === 'retry-after' ? String(seconds) : null) } });
+    let n = 0;
+    const t0 = Date.now();
+    const label = await fetchJevLabel('t', 200, { apiKey: 'k', retryDelayMs: 0, fetchFn: async () => (++n === 1 ? throttled(0.05) : res(200, okBody)) });
+    assert.equal(label.l, 'high');
+    assert.ok(Date.now() - t0 >= 45);
+    n = 0;
+    assert.equal(await fetchJevLabel('t', 200, { apiKey: 'k', retryDelayMs: 0, fetchFn: async () => { n++; return throttled(30); } }), null);
+    assert.equal(n, 1);
+  });
+
   it('returns null without retrying on other statuses, invalid answers and network errors', async () => {
     let n = 0;
     assert.equal(await fetchJevLabel('t', 200, { apiKey: 'k', retryDelayMs: 0, fetchFn: async () => { n++; return res(401); } }), null);
     assert.equal(n, 1);
     assert.equal(await fetchJevLabel('t', 200, { apiKey: 'k', fetchFn: async () => res(200, { answers: {} }) }), null);
     assert.equal(await fetchJevLabel('t', 200, { apiKey: 'k', retryDelayMs: 0, fetchFn: async () => { throw new Error('net'); } }), null);
+    assert.equal(await fetchJevLabel('t', 200, { apiKey: 'k', fetchFn: async () => ({ ok: true, status: 200, json: async () => { throw new Error('not json'); } }) }), null);
+  });
+
+  it('gives up at the timeout when the endpoint hangs', async () => {
+    const hang = (_url, init) => new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)));
+    const t0 = Date.now();
+    assert.equal(await fetchJevLabel('t', 200, { apiKey: 'k', timeoutMs: 30, fetchFn: hang }), null);
+    assert.ok(Date.now() - t0 < 2000);
+  });
+});
+
+describe('relay seedClassify wiring', () => {
+  const relay = readFileSync(new URL('../scripts/ais-relay.cjs', import.meta.url), 'utf8');
+  const start = relay.indexOf('async function seedClassify()');
+  const end = relay.indexOf('\nasync function startClassifySeedLoop()', start);
+
+  async function runSeedClassify(env, variantStats) {
+    assert.ok(start > 0 && end > start);
+    const writes = new Map();
+    const logs = [];
+    let variantCalls = 0;
+    const context = {
+      classifyInFlight: false, CLASSIFY_LLM_PROVIDERS: [{ envKey: 'TEST_PROVIDER' }], jevApiKey: () => jevApiKey(env),
+      process: { env }, Date, console: { log: (m) => logs.push(m), warn() {} }, setTimeout: (fn) => fn(),
+      telegramState: { items: [] }, publishSaudiCivilDefenseAlerts: async () => {},
+      upstashGet: async () => null, upstashSet: async (key, value) => { writes.set(key, value); },
+      MAX_POST_CHARS: 4096, classifyFetchLlm: async () => null, relayComputeImportanceScore: () => 0,
+      publishNotificationEvent: async () => {}, CLASSIFY_VARIANTS: ['full', 'tech'], CLASSIFY_VARIANT_STAGGER_MS: 0,
+      seedClassifyForVariant: async () => variantStats[variantCalls++],
+      shouldWriteClassifySeedMeta: () => true, envelopeWrite: async () => {},
+      NEWS_THREAT_SUMMARY_KEY: 'k', NEWS_THREAT_SUMMARY_TTL: 1,
+    };
+    vm.createContext(context);
+    await vm.runInContext(`${relay.slice(start, end)}\nseedClassify()`, context);
+    return { writes, logs, variantCalls };
+  }
+
+  it('runs on TYPESAFE_API_KEY alone and sums byProvider across variants into seed-meta', async () => {
+    const { writes, variantCalls } = await runSeedClassify({ TYPESAFE_API_KEY: 'k' }, [
+      { total: 9, classified: 5, skipped: 1, byProvider: { jev: 4, llm: 1, held: 2 } },
+      { total: 3, classified: 0, skipped: 0 },
+    ]);
+    assert.equal(variantCalls, 2);
+    const meta = writes.get('seed-meta:classify');
+    assert.equal(meta.recordCount, 5);
+    assert.deepEqual({ ...meta.byProvider }, { jev: 4, llm: 1, held: 2, skipped: 1 });
+  });
+
+  it('still skips when neither a Jev key nor an LLM key is configured', async () => {
+    const { writes, variantCalls, logs } = await runSeedClassify({ TYPESAFE_API_KEY: ' ' }, []);
+    assert.equal(variantCalls, 0);
+    assert.equal(writes.size, 0);
+    assert.ok(logs.some((m) => m.includes('no classifier keys configured')));
+  });
+
+  it('imports its level and category lists from the shared Jev module', () => {
+    assert.match(relay, /THREAT_LEVELS: CLASSIFY_VALID_LEVELS,\s+THREAT_CATEGORIES: CLASSIFY_VALID_CATEGORIES,\s+\} = require\('\.\.\/shared\/jev-classify\.js'\)/);
+    assert.doesNotMatch(relay, /const CLASSIFY_VALID_LEVELS = \[/);
+  });
+
+  it('caches a held Jev alert and counts it instead of publishing it', () => {
+    const loopStart = relay.indexOf('const llmResult = await classifyChunk(chunk);');
+    const publish = relay.indexOf('publishNotificationEvent({', loopStart);
+    const block = relay.slice(loopStart, publish);
+    const cacheWrite = block.indexOf('classifyCacheValue(entry, level, category');
+    const held = block.indexOf('if (isHeldJevAlert({ ...entry, l: level }))');
+    const gate = block.indexOf('if (shouldPublishClassifiedAlert({ ...entry, l: level }))');
+    assert.ok(cacheWrite > 0 && held > cacheWrite && gate > held, 'cache write, then held tally, then the publish gate');
+    assert.ok(block.slice(held, gate).includes('byProvider.held += 1'));
   });
 });

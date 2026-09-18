@@ -83,6 +83,7 @@ import { STORY_ALIAS_PUBLISH_SCRIPT } from '../../../../shared/story-alias-publi
 import { classifyOpinion } from '../../../_shared/opinion-classifier.js';
 import { classifyFeelGood } from '../../../_shared/feelgood-classifier.js';
 import { classifyEphemeralLiveCoverage } from '../../../../shared/ephemeral-live-classifier.js';
+import { jevGateAllowsAlert } from '../../../../shared/jev-classify.js';
 import { deriveCoreStoryPhase } from '../../../../shared/story-phase.js';
 import { buildTickerDictionary, extractTickers } from '../../../../shared/ticker-extract.js';
 import stocksData from '../../../../shared/stocks.json';
@@ -1287,6 +1288,17 @@ function parseClassifyCacheHit(raw: unknown): { level: string; category: string 
   return { level, category };
 }
 
+/**
+ * The relay holds a Jev-labelled critical/high below its pAlert gate and does
+ * not page on it. `isAlert` here feeds the client's breaking-news path, so the
+ * same row has to be held here too or the gate only covers one of two doors.
+ */
+function classifyHitMayAlert(raw: unknown): boolean {
+  if (raw == null || typeof raw !== 'object') return true;
+  const { src, pAlert } = raw as Record<string, unknown>;
+  return jevGateAllowsAlert({ src, pAlert });
+}
+
 async function enrichWithAiCache(items: ParsedItem[]): Promise<void> {
   // Apply the LLM cache to BOTH 'keyword' and 'keyword-historical-downgrade'
   // sources. The historical-downgrade path forced an info level based on a
@@ -1318,6 +1330,7 @@ async function enrichWithAiCache(items: ParsedItem[]): Promise<void> {
 
   for (const [key, relatedItems] of keyMap) {
     const hit = parseClassifyCacheHit(cached.get(key));
+    const mayAlert = classifyHitMayAlert(cached.get(key));
     // `hit.level === '_skip'` is currently unreachable and kept only as
     // defence-in-depth: both relay skip-writes emit `{ level: '_skip',
     // timestamp }` with no `category` (scripts/ais-relay.cjs:3892, :3968),
@@ -1404,7 +1417,7 @@ async function enrichWithAiCache(items: ParsedItem[]): Promise<void> {
       item.category = hit.category;
       item.confidence = 0.9;
       item.classSource = 'llm';
-      item.isAlert = cappedLevel === 'critical' || cappedLevel === 'high';
+      item.isAlert = (cappedLevel === 'critical' || cappedLevel === 'high') && mayAlert;
     }
   }
 }
@@ -3220,6 +3233,7 @@ export const __testing__ = {
   resolveMaxAgeMs,
   capLlmUpgrade,
   parseClassifyCacheHit,
+  classifyHitMayAlert,
   VERCEL_INITIAL_RESPONSE_LIMIT_MS,
   DIGEST_RESPONSE_TIMEOUT_MS,
   POST_FETCH_HEADROOM_MS,

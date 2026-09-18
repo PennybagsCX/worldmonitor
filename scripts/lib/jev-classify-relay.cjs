@@ -16,19 +16,22 @@
 //   - One title per request beat 50 per request on accuracy and latency.
 
 const {
-  JEV_ENDPOINT, buildJevRequest, parseJevAnswers,
+  JEV_ENDPOINT, JEV_NOTIFY_MIN_P_ALERT, buildJevRequest, parseJevAnswers, hasNonLatinLetters, jevGateAllowsAlert,
 } = require('../../shared/jev-classify.js');
 
-// P(critical) + P(high) a Jev-labelled alert needs before it pages anyone:
-// 83% precision at 89% recall on the judged set, against 46% for the LLM path.
-const JEV_NOTIFY_MIN_P_ALERT = 0.7;
-const JEV_CONCURRENCY = 16;
-const JEV_TIMEOUT_MS = 10_000;
+// TypeSafe allows 1,200 req/min. At the measured 374ms p50, 6 in flight is
+// ~16 req/s (~960/min); 16 in flight would be ~2,500/min.
+const JEV_CONCURRENCY = 6;
+const JEV_TIMEOUT_MS = 5_000;
 const JEV_RETRY_STATUSES = new Set([429, 529]);
+const JEV_MAX_RETRY_WAIT_MS = 5_000;
+// A chunk where Jev answered none of at least this many titles means it is
+// down or the key is bad; stop paying its timeout per title for a while.
+const JEV_BREAKER_MIN_ATTEMPTS = 5;
+const JEV_BREAKER_COOLDOWN_MS = 10 * 60 * 1000;
+const JEV_USER_AGENT = 'WorldMonitor-Relay/1.0';
 
-// The judged set held no non-Latin-script headlines and TypeSafe documents
-// other scripts as weaker, so those titles stay on the LLM until measured.
-const hasNonLatinLetters = (title) => /(?=\p{L})\P{Script=Latin}/u.test(title);
+const jevApiKey = (env = process.env) => (typeof env.TYPESAFE_API_KEY === 'string' ? env.TYPESAFE_API_KEY.trim() : '');
 
 async function fetchJevLabel(title, maxTextChars, {
   apiKey, fetchFn = fetch, timeoutMs = JEV_TIMEOUT_MS, retryDelayMs = 1000,
@@ -39,7 +42,7 @@ async function fetchJevLabel(title, maxTextChars, {
     try {
       resp = await fetchFn(JEV_ENDPOINT, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'User-Agent': JEV_USER_AGENT },
         body,
         signal: AbortSignal.timeout(timeoutMs),
       });
@@ -50,8 +53,13 @@ async function fetchJevLabel(title, maxTextChars, {
       const [label] = parseJevAnswers(await resp.json().catch(() => null), 1);
       return label ?? null;
     }
+    resp.body?.cancel?.().catch(() => {});
     if (!JEV_RETRY_STATUSES.has(resp.status) || attempt === 1) return null;
-    await new Promise((r) => setTimeout(r, retryDelayMs));
+    // Spending the one retry before the provider's cooldown ends wastes it; a
+    // long cooldown is cheaper to hand to the LLM chain than to wait out.
+    const retryAfterMs = Number(resp.headers?.get?.('retry-after')) * 1000;
+    if (retryAfterMs > JEV_MAX_RETRY_WAIT_MS) return null;
+    await new Promise((r) => setTimeout(r, Math.max(retryAfterMs || 0, retryDelayMs * (0.5 + Math.random()))));
   }
   return null;
 }
@@ -74,12 +82,16 @@ async function mapWithConcurrency(items, limit, fn) {
  * `[{i, l, c}] | null` contract, with `src: 'jev'`, `conf` and `pAlert` added
  * to the entries Jev labelled. With TYPESAFE_API_KEY unset it IS fetchLlm.
  */
-function createClassifyChunk({ env = process.env, fetchJevLabel: fetchLabel, fetchLlm, warn = console.warn }) {
-  return async function classifyChunk(titles, maxTextChars = 200) {
-    if (!env.TYPESAFE_API_KEY) return fetchLlm(titles, maxTextChars);
+function createClassifyChunk({ env = process.env, fetchJevLabel: fetchLabel, fetchLlm, warn = console.warn, now = Date.now }) {
+  let jevPausedUntil = 0;
 
+  return async function classifyChunk(titles, maxTextChars = 200) {
+    if (!jevApiKey(env) || now() < jevPausedUntil) return fetchLlm(titles, maxTextChars);
+
+    let attempted = 0;
     const labels = await mapWithConcurrency(titles, JEV_CONCURRENCY, async (title) => {
       if (hasNonLatinLetters(title)) return null;
+      attempted += 1;
       try { return await fetchLabel(title, maxTextChars); } catch { return null; }
     });
 
@@ -91,12 +103,15 @@ function createClassifyChunk({ env = process.env, fetchJevLabel: fetchLabel, fet
     });
     if (fallback.length === 0) return out;
 
-    if (fallback.length === titles.length) warn(`[Classify] Jev labelled 0/${titles.length}, using LLM chain`);
+    if (attempted >= JEV_BREAKER_MIN_ATTEMPTS && out.length === 0) {
+      jevPausedUntil = now() + JEV_BREAKER_COOLDOWN_MS;
+      warn(`[Classify] Jev labelled 0/${attempted}; using the LLM chain for ${JEV_BREAKER_COOLDOWN_MS / 60000}min`);
+    }
     const llm = await fetchLlm(fallback.map((i) => titles[i]), maxTextChars);
     if (Array.isArray(llm)) {
       for (const entry of llm) {
         const i = fallback[entry?.i];
-        if (i !== undefined) out.push({ ...entry, i });
+        if (i !== undefined) out.push({ i, l: entry.l, c: entry.c });
       }
     }
     return out.length > 0 ? out : null;
@@ -105,8 +120,7 @@ function createClassifyChunk({ env = process.env, fetchJevLabel: fetchLabel, fet
 
 function shouldPublishClassifiedAlert(entry) {
   if (entry.l !== 'critical' && entry.l !== 'high') return false;
-  if (entry.src !== 'jev') return true;
-  return Number(entry.pAlert) >= JEV_NOTIFY_MIN_P_ALERT;
+  return jevGateAllowsAlert(entry);
 }
 
 function classifyCacheValue(entry, level, category, now) {
@@ -114,6 +128,7 @@ function classifyCacheValue(entry, level, category, now) {
   if (entry.src === 'jev') {
     value.src = 'jev';
     value.conf = Math.round(entry.conf * 100) / 100;
+    value.pAlert = Math.round(entry.pAlert * 100) / 100;
   }
   return value;
 }
@@ -122,8 +137,13 @@ function countLabelSource(tally, entry) {
   tally[entry.src === 'jev' ? 'jev' : 'llm'] += 1;
 }
 
+const isHeldJevAlert = (entry) =>
+  entry.src === 'jev' && (entry.l === 'critical' || entry.l === 'high') && !shouldPublishClassifiedAlert(entry);
+
 module.exports = {
   JEV_NOTIFY_MIN_P_ALERT,
+  jevApiKey,
+  isHeldJevAlert,
   createClassifyChunk,
   fetchJevLabel,
   shouldPublishClassifiedAlert,

@@ -2,10 +2,10 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   JEV_MODEL, THREAT_LEVELS, THREAT_CATEGORIES, LEVEL_CRITERIA, CATEGORY_CRITERIA,
-  buildJevRequest, parseJevAnswers, sanitizeHeadline,
+  buildJevRequest, parseJevAnswers, sanitizeHeadline, hasNonLatinLetters,
 } from '../shared/jev-classify.js';
 
-const choice = (value, confidence, probabilities = {}) => ({ type: 'choice', choice: value, confidence, probabilities });
+const choice = (value, confidence, probabilities = { [value]: confidence }) => ({ type: 'choice', choice: value, confidence, probabilities });
 
 describe('jev-classify criteria', () => {
   it('describes exactly the production levels and categories', () => {
@@ -71,9 +71,25 @@ describe('parseJevAnswers', () => {
     assert.deepEqual(parseJevAnswers({ answers: { l0: { type: 'noul', noul: 0.9 }, c0: choice('general', 0.9) } }, 1), []);
   });
 
+  it('drops a level answer that carries no probability for its own choice', () => {
+    for (const probabilities of [{}, undefined, { low: 0.9 }, { high: 'n/a' }]) {
+      const body = { answers: { l0: { type: 'choice', choice: 'high', confidence: 0.9, probabilities }, c0: choice('conflict', 0.9) } };
+      assert.deepEqual(parseJevAnswers(body, 1), [], JSON.stringify(probabilities));
+    }
+  });
+
   it('returns nothing for a malformed body', () => {
     for (const body of [null, undefined, 'oops', {}, { answers: null }, { answers: 'x' }]) {
       assert.deepEqual(parseJevAnswers(body, 2), []);
     }
+  });
+});
+
+describe('hasNonLatinLetters', () => {
+  it('is true only when a letter is outside the Latin script', () => {
+    assert.equal(hasNonLatinLetters('Trafikkulykke på Riksvei 4: “En” – 3 døde'), false);
+    assert.equal(hasNonLatinLetters('الدفاع المدني يحذر'), true);
+    assert.equal(hasNonLatinLetters('Путин заявил'), true);
+    assert.equal(hasNonLatinLetters('Tokyo 東京 summit'), true);
   });
 });

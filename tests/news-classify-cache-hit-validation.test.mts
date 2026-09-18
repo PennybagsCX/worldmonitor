@@ -43,7 +43,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { __testing__ } from '../server/worldmonitor/news/v1/list-feed-digest';
 
-const { parseClassifyCacheHit } = __testing__;
+const { parseClassifyCacheHit, classifyHitMayAlert } = __testing__;
 
 describe('parseClassifyCacheHit — valid shapes', () => {
   it('valid string level + category → returns the pair unchanged', () => {
@@ -205,5 +205,29 @@ describe('parseClassifyCacheHit — call-site wiring (mutation lock)', () => {
       'cache hits must not be type-asserted back to `{ level?, category? }` — ' +
         'that unchecked cast IS the #3753 bug this PR fixed',
     );
+  });
+});
+
+// The relay pages a Jev-labelled critical/high only at P(critical)+P(high) >=
+// JEV_NOTIFY_MIN_P_ALERT. The digest reads the same cache row, and the client's
+// breaking-news path acts on `isAlert`, so the row has to carry that decision.
+describe('classifyHitMayAlert — a held Jev alert stays held for digest readers', () => {
+  it('an LLM row (no src) may alert, exactly as before', () => {
+    assert.equal(classifyHitMayAlert({ level: 'high', category: 'conflict', timestamp: 1 }), true);
+  });
+
+  it('a Jev row at or above the gate may alert', () => {
+    assert.equal(classifyHitMayAlert({ level: 'critical', category: 'conflict', src: 'jev', conf: 0.9, pAlert: 0.7 }), true);
+  });
+
+  it('a Jev row below the gate, or with no usable pAlert, may not', () => {
+    assert.equal(classifyHitMayAlert({ level: 'high', category: 'disaster', src: 'jev', conf: 0.43, pAlert: 0.55 }), false);
+    assert.equal(classifyHitMayAlert({ level: 'high', category: 'disaster', src: 'jev', conf: 0.43 }), false);
+    assert.equal(classifyHitMayAlert({ level: 'high', category: 'disaster', src: 'jev', pAlert: '0.9' }), false);
+  });
+
+  it('enrichWithAiCache applies it to isAlert', () => {
+    const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../server/worldmonitor/news/v1/list-feed-digest.ts'), 'utf-8');
+    assert.match(src, /item\.isAlert = \(cappedLevel === 'critical' \|\| cappedLevel === 'high'\) && mayAlert;/);
   });
 });
