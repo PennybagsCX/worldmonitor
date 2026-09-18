@@ -86,6 +86,37 @@ const TELEGRAM_RELAY_TIMEOUT_MS = {
   resolve: 20_000,
   channel: 22_000,
 };
+
+/**
+ * Sentry severity for a failed relay request.
+ *
+ * `AbortError` is our own budget firing (TELEGRAM_RELAY_TIMEOUT_MS). The edge
+ * runtime also drops upstream connections that were already established, and
+ * those rejections are the same class of routine transport churn: this handler
+ * neither caused them nor can fix them. WORLDMONITOR-R1 is one such group,
+ * `Error: Network connection lost.`, which paged at `error` while the abort arm
+ * of this same catch sat at `warning` (WORLDMONITOR-11G) — one condition split
+ * across two severities, the shape the WORLDMONITOR-VM limiter fix addressed.
+ *
+ * "Not an AbortError" is the wrong discriminator. A relay refusing connections
+ * or resolving to nothing IS a defect and must keep paging. The boundary is
+ * whether a connection was established and then lost, so this is a closed set
+ * of drop phrasings rather than a catch-all. `fetch failed` is deliberately
+ * absent: undici uses it as a generic wrapper that hides ECONNREFUSED.
+ *
+ * Exported purely as a test seam; the classification is otherwise observable
+ * only through a Sentry capture.
+ *
+ * @param {{ name?: string, message?: string } | null | undefined} error
+ * @returns {'warning' | 'error'}
+ */
+export function relayFailureLevel(error) {
+  if (error?.name === 'AbortError') return 'warning';
+  const msg = error?.message || String(error ?? '');
+  return /Network connection lost|ECONNRESET|socket hang up|ETIMEDOUT|^terminated$/i.test(msg)
+    ? 'warning'
+    : 'error';
+}
 // `channel` is the fan-out mode: one request per watchlist entry, so the limit
 // has to clear TELEGRAM_WATCHLIST_MAX_ENTRIES (20) with room for a second tab
 // and an in-window add. Setting it equal to the cap left exactly zero headroom
@@ -440,19 +471,19 @@ export default async function handler(req) {
     // (undici cause chains, MTProto text) and the browser has no use for it.
     // Failures are captured server-side instead.
     console.warn('[telegram-feed] relay request failed:', error?.message || String(error));
-    // Timeouts capture at `warning`, not `error`: fetchWithTimeout aborts on the
-    // mode budget (TELEGRAM_RELAY_TIMEOUT_MS), so those 504s are routine relay
-    // latency rather than product defects. Skipping them outright (the previous
-    // posture, inherited from api/rss-proxy.js) left relay degradation with no
-    // signal at all — nothing in scripts/ or .github/workflows/ watches it.
-    // `warning` keeps it queryable without counting toward error totals.
-    // `mode` is mandatory on both paths: the budgets differ by 7s, so without
+    // Routine transport churn captures at `warning`, not `error` — see
+    // relayFailureLevel. Skipping those outright (the previous posture,
+    // inherited from api/rss-proxy.js) left relay degradation with no signal at
+    // all — nothing in scripts/ or .github/workflows/ watches it. `warning`
+    // keeps it queryable without counting toward error totals.
+    // `mode` is mandatory on every path: the budgets differ by 7s, so without
     // it a feed stall and a channel stall are the same Sentry issue.
+    // `timeout_ms` stays exclusive to the abort arm; it describes a deadline
+    // the other failures never reached.
     void captureSilentError(error, {
       tags: { route: 'api/telegram-feed', step: 'relay-fetch', mode },
-      ...(isTimeout
-        ? { level: 'warning', extra: { timeout_ms: TELEGRAM_RELAY_TIMEOUT_MS[mode] } }
-        : {}),
+      level: relayFailureLevel(error),
+      ...(isTimeout ? { extra: { timeout_ms: TELEGRAM_RELAY_TIMEOUT_MS[mode] } } : {}),
     });
     return jsonResponse({
       error: isTimeout ? 'Relay timeout' : 'Relay request failed',
