@@ -77,11 +77,17 @@ test('EONET retries the dual-family connect failure over IPv4 and destroys its d
 });
 
 test('IPv4 fallback is limited to EONET and the exact connect failure signature', async () => {
+  const wrongFamily = dualFamilyFailure();
+  wrongFamily.cause.errors[1].address = '127.0.0.2';
+  const wrongCode = dualFamilyFailure();
+  wrongCode.cause.errors[1].code = 'ECONNREFUSED';
   for (const [source, failure] of [
     ['gdacs:TC', dualFamilyFailure()],
     ['eonet', new DOMException('timeout', 'TimeoutError')],
     ['eonet', new TypeError('fetch failed', { cause: { code: 'ETIMEDOUT' } })],
     ['eonet', new TypeError('fetch failed', { cause: new AggregateError([]) })],
+    ['eonet', wrongFamily],
+    ['eonet', wrongCode],
   ]) {
     const transport = fixture((current, _attempt, options) => {
       assert.equal(options.dispatcher, undefined);
@@ -90,6 +96,39 @@ test('IPv4 fallback is limited to EONET and the exact connect failure signature'
     await run(transport);
     assert.equal(transport.calls.get(source), 2);
   }
+});
+
+test('failed IPv4 retry destroys its dispatcher and preserves the previous success and expiry', async () => {
+  const initial = await run(fixture());
+  let dispatcher;
+  const transport = fixture((source, attempt, options) => {
+    if (source !== 'eonet') return;
+    if (attempt === 1) throw dualFamilyFailure();
+    dispatcher = options.dispatcher;
+    throw new DOMException('timeout', 'TimeoutError');
+  });
+  const now = NOW + 3_600_000;
+  const result = await fetchNaturalEvents({
+    now, previousSources: initial._sourceSnapshots, fetchFn: transport.fetchFn,
+    fetchHkoWarningsFn: async () => ({ warnings: [], dataAvailable: true, sourceDecision: { status: 'used' } }),
+  });
+  assert.equal(dispatcher.destroyed, true);
+  assert.equal(transport.calls.get('eonet'), 2);
+  for (const [source, count] of transport.calls) if (source !== 'eonet') assert.equal(count, 1, source);
+  const health = naturalEventsAfterPublish(result).freshnessMetaPatch.sourceHealth.eonet;
+  assert.equal(health.status, 'retained');
+  assert.equal(health.lastSuccessAt, NOW);
+  assert.equal(health.lastAttemptAt, now);
+  assert.equal(health.retainedUntil, NOW + 9 * 3_600_000);
+});
+
+test('a body-stage failure does not select the EONET connect fallback', async () => {
+  const transport = fixture((source, _attempt, options) => {
+    assert.equal(options.dispatcher, undefined);
+    if (source === 'eonet') return { ok: true, json: async () => { throw dualFamilyFailure(); } };
+  });
+  await run(transport);
+  assert.equal(transport.calls.get('eonet'), 2);
 });
 
 test('transient EONET request and GDACS body failure recover without replaying companions', async () => {
