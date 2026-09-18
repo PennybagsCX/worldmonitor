@@ -261,6 +261,23 @@ test('connection diagnostics bound cyclic and wide errors and omit unknown sensi
   assert.equal(transport.calls.get('eonet'), 2);
 });
 
+test('throwing diagnostic getters preserve bounded failures and the retry limit', async t => {
+  const logs = [];
+  t.mock.method(console, 'warn', (...args) => logs.push(args.join(' ')));
+  t.mock.method(console, 'log', (...args) => logs.push(args.join(' ')));
+  const error = new TypeError('private fetch details');
+  Object.defineProperty(error, 'errors', { get() { throw new Error('secret getter failure'); } });
+  const transport = fixture(source => { if (source === 'eonet') throw error; });
+  const result = await run(transport);
+  const output = logs.join('\n');
+  assert.match(output, /eonet request FETCH_FAILED attempt=2 elapsedMs=\d+ attemptElapsedMs=\d+/);
+  assert.match(output, /details=\{"unavailable":true\}/);
+  assert.doesNotMatch(output, /secret|private/);
+  assert.equal(transport.calls.get('eonet'), 2);
+  for (const [source, count] of transport.calls) if (source !== 'eonet') assert.equal(count, 1, source);
+  assert.deepEqual(naturalEventsAfterPublish(result).freshnessMetaPatch.failedSources, ['eonet']);
+});
+
 test('failure timing separates each request duration from total elapsed time', async t => {
   let clock = 0;
   const logs = [];

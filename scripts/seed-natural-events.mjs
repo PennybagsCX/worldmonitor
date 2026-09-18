@@ -200,7 +200,14 @@ async function fetchEventSourceJson(source, url, fetchFn) {
       if (cause instanceof SyntaxError) kind = 'INVALID_JSON';
       if (stage === 'http') kind = `HTTP_${cause.status}`;
       const finished = performance.now();
-      const details = transport && stage !== 'http' ? ` details=${JSON.stringify(sourceFailureDetails(cause))}` : '';
+      let details = '';
+      if (transport && stage !== 'http') {
+        try {
+          details = ` details=${JSON.stringify(sourceFailureDetails(cause))}`;
+        } catch {
+          details = ' details={"unavailable":true}';
+        }
+      }
       const error = Object.assign(new Error(`${source} ${stage} ${kind} attempt=${attempt} elapsedMs=${Math.round(finished - started)} attemptElapsedMs=${Math.round(finished - attemptStarted)}${details}`), {
         nonRetryable: stage === 'http' ? cause.nonRetryable : !transport,
         retryAfterMs: cause.retryAfterMs,
