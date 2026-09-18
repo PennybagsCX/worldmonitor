@@ -25,8 +25,10 @@ const JEV_CONCURRENCY = 6;
 const JEV_TIMEOUT_MS = 5_000;
 const JEV_RETRY_STATUSES = new Set([429, 529]);
 const JEV_MAX_RETRY_WAIT_MS = 5_000;
-// A chunk where Jev answered none of at least this many titles means it is
-// down or the key is bad; stop paying its timeout per title for a while.
+// This many titles in a row with no Jev answer means it is down or the key is
+// bad; stop paying its timeout per title for a while. Counted across chunks:
+// a warm cache leaves chunks of one or two titles, which would never trip a
+// per-chunk count.
 const JEV_BREAKER_MIN_ATTEMPTS = 5;
 const JEV_BREAKER_COOLDOWN_MS = 10 * 60 * 1000;
 const JEV_USER_AGENT = 'WorldMonitor-Relay/1.0';
@@ -84,6 +86,7 @@ async function mapWithConcurrency(items, limit, fn) {
  */
 function createClassifyChunk({ env = process.env, fetchJevLabel: fetchLabel, fetchLlm, warn = console.warn, now = Date.now }) {
   let jevPausedUntil = 0;
+  let unansweredStreak = 0;
 
   return async function classifyChunk(titles, maxTextChars = 200) {
     if (!jevApiKey(env) || now() < jevPausedUntil) return fetchLlm(titles, maxTextChars);
@@ -101,11 +104,13 @@ function createClassifyChunk({ env = process.env, fetchJevLabel: fetchLabel, fet
       if (label) out.push({ i, l: label.l, c: label.c, src: 'jev', conf: label.levelConf, pAlert: label.pAlert });
       else fallback.push(i);
     });
-    if (fallback.length === 0) return out;
+    if (fallback.length === 0) { unansweredStreak = 0; return out; }
 
-    if (attempted >= JEV_BREAKER_MIN_ATTEMPTS && out.length === 0) {
+    unansweredStreak = out.length > 0 ? 0 : unansweredStreak + attempted;
+    if (unansweredStreak >= JEV_BREAKER_MIN_ATTEMPTS) {
+      warn(`[Classify] Jev answered none of the last ${unansweredStreak} titles; using the LLM chain for ${JEV_BREAKER_COOLDOWN_MS / 60000}min`);
       jevPausedUntil = now() + JEV_BREAKER_COOLDOWN_MS;
-      warn(`[Classify] Jev labelled 0/${attempted}; using the LLM chain for ${JEV_BREAKER_COOLDOWN_MS / 60000}min`);
+      unansweredStreak = 0;
     }
     const llm = await fetchLlm(fallback.map((i) => titles[i]), maxTextChars);
     if (Array.isArray(llm)) {
@@ -128,7 +133,9 @@ function classifyCacheValue(entry, level, category, now) {
   if (entry.src === 'jev') {
     value.src = 'jev';
     value.conf = Math.round(entry.conf * 100) / 100;
-    value.pAlert = Math.round(entry.pAlert * 100) / 100;
+    // Floored, never rounded: 0.6951 stored as 0.70 would clear the gate for the
+    // digest reader on a title the relay held.
+    value.pAlert = Math.floor(entry.pAlert * 100) / 100;
   }
   return value;
 }

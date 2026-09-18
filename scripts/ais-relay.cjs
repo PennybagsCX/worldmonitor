@@ -4862,10 +4862,11 @@ function classifyFetchLlmSingle(titles, _apiKey, apiUrl, model, headers, extraBo
         { role: 'user', content: prompt },
       ],
       temperature: 0,
-      // Floor of 200: with Jev labelling most titles, the LLM often gets one or
-      // two leftovers, and 40 tokens truncates the reasoning-model fallback
-      // mid-JSON (measured in classify-event.ts: 0/8 valid at 50, 8/8 at 200).
-      max_tokens: Math.max(titles.length * 40, 200),
+      // +200 headroom: the reasoning-model fallback spends ~150-190 tokens before
+      // any JSON (measured in classify-event.ts: one title is 0/8 valid at 50,
+      // 8/8 at 200). With Jev labelling most titles the LLM often gets one or
+      // two leftovers, where 40 per title truncated mid-JSON.
+      max_tokens: 200 + titles.length * 40,
       ...extraBody,
     });
 

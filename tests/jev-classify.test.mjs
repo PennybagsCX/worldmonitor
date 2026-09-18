@@ -72,7 +72,7 @@ describe('parseJevAnswers', () => {
   });
 
   it('drops a level answer that carries no probability for its own choice', () => {
-    for (const probabilities of [{}, undefined, { low: 0.9 }, { high: 'n/a' }]) {
+    for (const probabilities of [{}, undefined, { low: 0.9 }, { high: 'n/a' }, { high: null }, { high: '' }, { high: '0.9' }]) {
       const body = { answers: { l0: { type: 'choice', choice: 'high', confidence: 0.9, probabilities }, c0: choice('conflict', 0.9) } };
       assert.deepEqual(parseJevAnswers(body, 1), [], JSON.stringify(probabilities));
     }

@@ -139,13 +139,13 @@ export function parseJevAnswers(body, count) {
     // A level without its own probability is a response shape this parser does
     // not understand. Dropping it sends the title to the fallback, where reading
     // pAlert as 0 would instead cache an alert level that can never publish.
-    if (!Number.isFinite(Number(p[level.choice]))) continue;
+    if (typeof p[level.choice] !== 'number' || !Number.isFinite(p[level.choice])) continue;
     labels.push({
       i,
       l: level.choice,
       c: category.choice,
       levelConf: level.conf,
-      pAlert: (Number(p.critical) || 0) + (Number(p.high) || 0),
+      pAlert: [p.critical, p.high].reduce((sum, v) => sum + (typeof v === 'number' && Number.isFinite(v) ? v : 0), 0),
     });
   }
   return labels;

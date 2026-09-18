@@ -124,6 +124,28 @@ describe('createClassifyChunk', () => {
     assert.ok(out.every((e) => e.src === 'jev'));
   });
 
+  it('pauses across small chunks too: five straight unanswered titles, however they were chunked', async () => {
+    const { classifyChunk, calls } = harness({ jev: async () => null });
+    await classifyChunk(['a', 'b']);
+    await classifyChunk(['c', 'd']);
+    assert.equal(calls.warn.length, 0);
+    await classifyChunk(['e']);
+    assert.equal(calls.warn.length, 1);
+    await classifyChunk(['f']);
+    assert.equal(calls.jev.length, 5, 'paused after the fifth straight unanswered title');
+  });
+
+  it('a single answer resets the unanswered streak', async () => {
+    let up = false;
+    const { classifyChunk, calls } = harness({ jev: async () => (up ? jevLabel('low') : null) });
+    await classifyChunk(['a', 'b', 'c', 'd']);
+    up = true;
+    await classifyChunk(['e']);
+    up = false;
+    await classifyChunk(['f', 'g', 'h', 'i']);
+    assert.equal(calls.warn.length, 0);
+  });
+
   it('does not pause or warn for a chunk Jev was never asked about', async () => {
     const { classifyChunk, calls } = harness();
     await classifyChunk(Array.from({ length: 6 }, () => 'الدفاع المدني'));
@@ -182,6 +204,16 @@ describe('classifyCacheValue', () => {
       classifyCacheValue({ src: 'jev', conf: 0.81234, pAlert: 0.9 }, 'high', 'conflict', 5),
       { level: 'high', category: 'conflict', timestamp: 5, src: 'jev', conf: 0.81, pAlert: 0.9 },
     );
+  });
+
+  it('never rounds a held alert up to the gate, so every reader of the row agrees with the relay', () => {
+    for (const pAlert of [0.6951, 0.6999, 0.699999]) {
+      const entry = { l: 'high', src: 'jev', conf: 0.5, pAlert };
+      assert.equal(shouldPublishClassifiedAlert(entry), false);
+      const row = classifyCacheValue(entry, 'high', 'conflict', 5);
+      assert.equal(shouldPublishClassifiedAlert({ l: 'high', src: 'jev', pAlert: row.pAlert }), false, `stored ${row.pAlert}`);
+    }
+    assert.equal(classifyCacheValue({ src: 'jev', conf: 1, pAlert: 0.7 }, 'high', 'c', 5).pAlert, 0.7);
   });
 });
 

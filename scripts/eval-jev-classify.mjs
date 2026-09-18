@@ -28,7 +28,8 @@ const args = Object.fromEntries(
 );
 const VARIANTS = (args.variants ?? 'full,tech,finance,happy,commodity').split(',');
 const LIMIT = Number(args.limit ?? 300);
-const SHAPES = (args.shapes ?? 'single,batch').split(',');
+// Captured outputs are single-request outputs, so a replay can only score that shape.
+const SHAPES = args.replay ? ['single'] : (args.shapes ?? 'single,batch').split(',');
 const BATCH = Number(args.batch ?? 50);
 const SINGLE_CONCURRENCY = 25;
 const USD_PER_M_INPUT = 0.042;
@@ -203,6 +204,7 @@ for (const shape of SHAPES) {
     ? { out: golden.rows.slice(0, rows.length).map((g) => g.jev ?? null), calls: [], wallMs: 0 }
     : await runShape(shape, rows);
   if (args.capture && golden && shape === 'single') {
+    if (rows.length !== golden.rows.length) throw new Error(`--capture needs every row: evaluated ${rows.length} of ${golden.rows.length} (raise --limit)`);
     golden.jevModel = report.model;
     golden.rows.forEach((g, i) => {
       const j = out[i];

@@ -1417,6 +1417,9 @@ async function enrichWithAiCache(items: ParsedItem[]): Promise<void> {
       item.category = hit.category;
       item.confidence = 0.9;
       item.classSource = 'llm';
+      // The cached row is the sole authority here, as it was for LLM rows: a held
+      // Jev alert clears a keyword-derived isAlert too (held rows were mostly
+      // false alerts on the judged set).
       item.isAlert = (cappedLevel === 'critical' || cappedLevel === 'high') && mayAlert;
     }
   }
