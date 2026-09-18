@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import {
   JEV_ENDPOINT, JEV_MODEL, THREAT_LEVELS, buildJevRequest, parseJevAnswers, hasNonLatinLetters,
 } from '../shared/jev-classify.js';
+import { isAcceptableDigest } from './shared/digest-acceptance.mjs';
 
 const args = Object.fromEntries(
   process.argv.slice(2).join(' ').split('--').filter(Boolean).map((a) => {
@@ -63,14 +64,17 @@ async function loadLabelledTitles() {
     const digest = parseMaybe(await redis(['GET', digestKey]));
     const payload = digest?.data ?? digest;
     // A variant that silently contributes nothing skews the sample toward the others.
-    if (!payload?.categories || typeof payload.categories !== 'object') {
+    // Count titled items, not new ones: a variant whose titles all duplicate an earlier variant is still present.
+    const variantTitles = isAcceptableDigest(payload)
+      ? Object.values(payload.categories).flatMap((bucket) => (Array.isArray(bucket?.items) ? bucket.items : []))
+        .map((item) => item?.title).filter(Boolean)
+      : [];
+    if (variantTitles.length === 0) {
       throw new Error(`no usable digest for variant "${variant}" at ${digestKey}; drop it from --variants to evaluate without it`);
     }
     const before = titles.size;
-    for (const bucket of Object.values(payload?.categories ?? {})) {
-      for (const item of bucket?.items ?? []) {
-        if (item?.title && !titles.has(item.title)) titles.set(item.title, variant);
-      }
+    for (const title of variantTitles) {
+      if (!titles.has(title)) titles.set(title, variant);
     }
     console.error(`  ${variant}: ${titles.size - before} new titles`);
   }
