@@ -214,7 +214,6 @@ describe('relayFailureLevel (WORLDMONITOR-R1)', () => {
     'read ECONNRESET',
     'socket hang up',
     'terminated',
-    'connect ETIMEDOUT 10.0.0.1:443',
   ]) {
     it(`treats "${msg}" as routine transport churn`, () => {
       assert.equal(relayFailureLevel(new Error(msg)), 'warning');
@@ -225,11 +224,33 @@ describe('relayFailureLevel (WORLDMONITOR-R1)', () => {
     'connect ECONNREFUSED 10.0.0.1:443',
     'getaddrinfo ENOTFOUND relay.example.com',
     'Unexpected token < in JSON at position 0',
+    // A connection that expired mid-handshake was never established, so it is
+    // an unreachable relay, not a drop. Keeping it at `warning` would hide a
+    // persistent routing or firewall outage from on-call.
+    'connect ETIMEDOUT 10.0.0.1:443',
   ]) {
     it(`treats "${msg}" as a defect`, () => {
       assert.equal(relayFailureLevel(new Error(msg)), 'error');
     });
   }
+
+  // `code` is structured and immune to message text, so it outranks any
+  // phrasing when the runtime supplies it.
+  it('prefers a structured code over the message', () => {
+    const reset = Object.assign(new Error('write failed'), { code: 'ECONNRESET' });
+    assert.equal(relayFailureLevel(reset), 'warning');
+
+    const refused = Object.assign(new Error('Network connection lost.'), { code: 'ECONNREFUSED' });
+    assert.equal(relayFailureLevel(refused), 'error', 'a structured code outranks a drop phrasing');
+  });
+
+  it('does not match a drop phrasing quoted inside a longer message', () => {
+    assert.equal(
+      relayFailureLevel(new Error('relay responded 500: upstream reported ECONNRESET to its peer')),
+      'error',
+      'diagnostic prose that mentions a drop code is not itself a drop',
+    );
+  });
 
   it('classifies our own abort budget as routine, whatever its message', () => {
     assert.equal(relayFailureLevel(abortError()), 'warning');
