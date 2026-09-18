@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
+import dns from 'node:dns';
 import { fetchNaturalEvents, naturalEventsAfterPublish } from '../scripts/seed-natural-events.mjs';
 
 const NOW = Date.parse('2026-09-18T06:00:00Z');
@@ -38,6 +39,57 @@ function fixture(fail) {
 const run = transport => fetchNaturalEvents({
   now: NOW, fetchFn: transport.fetchFn,
   fetchHkoWarningsFn: async () => ({ warnings: [], dataAvailable: true, sourceDecision: { status: 'used' } }),
+});
+
+function dualFamilyFailure() {
+  return new TypeError('fetch failed', { cause: Object.assign(new AggregateError([
+    Object.assign(new Error(), { code: 'ETIMEDOUT', syscall: 'connect', address: '127.0.0.1' }),
+    Object.assign(new Error(), { code: 'ENETUNREACH', syscall: 'connect', address: '::1' }),
+  ]), { code: 'ETIMEDOUT' }) });
+}
+
+test('EONET retries the dual-family connect failure over IPv4 and destroys its dispatcher', async t => {
+  const server = createServer((_req, res) => { res.end(JSON.stringify({ events: [event] })); });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const lookup = dns.lookup;
+  const families = [];
+  t.mock.method(dns, 'lookup', (host, options, callback) => {
+    if (host !== 'eonet.fixture.invalid') return lookup(host, options, callback);
+    families.push(options.family);
+    process.nextTick(callback, null, '127.0.0.1', 4);
+  });
+  let dispatcher;
+  const transport = fixture(async (source, attempt, options) => {
+    if (source !== 'eonet') { assert.equal(options.dispatcher, undefined); return; }
+    if (attempt === 1) { assert.equal(options.dispatcher, undefined); throw dualFamilyFailure(); }
+    dispatcher = options.dispatcher;
+    return fetch(`http://eonet.fixture.invalid:${server.address().port}`, options);
+  });
+  const result = await run(transport);
+  assert.deepEqual(families, [4]);
+  assert.equal(dispatcher.destroyed, true);
+  assert.equal(transport.calls.get('eonet'), 2);
+  for (const [source, count] of transport.calls) if (source !== 'eonet') assert.equal(count, 1, source);
+  assert.ok(result.events.some(item => item.id === event.id));
+  assert.equal(result._sourceSnapshots.eonet.fetchedAt, NOW);
+});
+
+test('IPv4 fallback is limited to EONET and the exact connect failure signature', async () => {
+  for (const [source, failure] of [
+    ['gdacs:TC', dualFamilyFailure()],
+    ['eonet', new DOMException('timeout', 'TimeoutError')],
+    ['eonet', new TypeError('fetch failed', { cause: { code: 'ETIMEDOUT' } })],
+    ['eonet', new TypeError('fetch failed', { cause: new AggregateError([]) })],
+  ]) {
+    const transport = fixture((current, _attempt, options) => {
+      assert.equal(options.dispatcher, undefined);
+      if (current === source) throw failure;
+    });
+    await run(transport);
+    assert.equal(transport.calls.get(source), 2);
+  }
 });
 
 test('transient EONET request and GDACS body failure recover without replaying companions', async () => {
