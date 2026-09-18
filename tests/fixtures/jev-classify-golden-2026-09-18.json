@@ -1,0 +1,1535 @@
+{
+ "note": "255 live digest headlines, 2026-09-18. judge = blind Opus annotation against the production rubric; llm = cached production label at capture time.",
+ "rows": [
+  {
+   "title": "India vows to protect energy security after new US tariffs over Russian oil",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "India's Tata Group firms shed $3.2 billion in market value amid holding company rift - Reuters",
+   "judge": "low",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Iran says it struck oil tanker in Strait of Hormuz",
+   "judge": "critical",
+   "borderline": false,
+   "llm": "critical"
+  },
+  {
+   "title": "After fallout with Chinese parent, chipmaker Nexperia partners with India's Tata - Reuters",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Why Is Thailand Not Prosecuting Members of the Mauerberger Network?",
+   "judge": "info",
+   "borderline": false,
+   "llm": "medium"
+  },
+  {
+   "title": "Shark kills swimmer off beach in Western Australia: Police",
+   "judge": "info",
+   "borderline": false,
+   "llm": "low"
+  },
+  {
+   "title": "Applied Materials to invest $5 billion in India as Modi's flagship chip event kicks off - Reuters",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "India's Tata reappoints chairman, backs listing in rift with controlling charity - Reuters",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "Erdogan to sidestep Turkey’s constitutional term limits in early 2028 vote, adviser says",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "Apple Pay eyes India rollout with Axis Bank, sources say - Reuters",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "EV maker BYD recalls more than 180,000 cars in China over brake pedal risk",
+   "judge": "low",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Three dead and eight injured in Philippines school shooting",
+   "judge": "high",
+   "borderline": false,
+   "llm": "high"
+  },
+  {
+   "title": "Public servants need to shift from doing things ‘for’ Singaporeans to ‘with’ them: Chan Chun Sing",
+   "judge": "info",
+   "borderline": false,
+   "llm": "low"
+  },
+  {
+   "title": "Singapore brothers behind William’s Auto get jail for tax evasion and money laundering",
+   "judge": "info",
+   "borderline": false,
+   "llm": "low"
+  },
+  {
+   "title": "Russians begin 3 days of voting in a parliamentary election set to cement the Kremlin's power - AP News",
+   "judge": "low",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "As Iran war grinds on, Trump to face skeptical world leaders at UN - Reuters",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "UN experts say grounds to believe US committed war crimes in Iran strikes",
+   "judge": "high",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Empty podiums, prizes for e-voting, no opposition: Russians head to the polls amid intensifying war in Ukraine - CNN",
+   "judge": "low",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Three dead, eight injured in Philippines school shooting",
+   "judge": "high",
+   "borderline": false,
+   "llm": "high"
+  },
+  {
+   "title": "Carney embraces EU associate membership proposal as Trump pushes Canada closer to Europe - AP News",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "US stocks rally to their best day in 6 weeks after oil prices and bond yields ease - AP News",
+   "judge": "low",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "US approves potential $24 billion sale of F-35 jets to Saudi Arabia - CNN",
+   "judge": "high",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Almost 50 dead in Nigeria after drinking alcohol suspected to contain methanol",
+   "judge": "high",
+   "borderline": false,
+   "llm": "high"
+  },
+  {
+   "title": "Ninth woman's body found as South African police investigate string of deaths",
+   "judge": "low",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "‘We demand the truth’: Olga Tokarczuk and JM Coetzee lead calls for proof of life of disappeared Eritrean writers",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "Flights briefly paused at DC airport as unauthorized drone appears over runway - CNN",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "Canada welcomes EU proposal to become 'associate member'",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "OpenAI flags concerning new AI behavior and vows to track it more closely - AP News",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Congress has failed to regulate AI for years – and there’s little sign that’s changing - CNN",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Why are world leaders at the UN next week and what will they talk about? - Reuters",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "The lost Corsair: The search for a Korean War legend and its missing pilot - CNN",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "U.N. experts say U.S. may have committed war crimes with 2 Iran strikes",
+   "judge": "high",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Iran live updates: US rejects UN report on possible war crimes in Minab school strike",
+   "judge": "high",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Rubio takes behind-the-scenes role on Iran war while keeping his options open for the future",
+   "judge": "info",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Hyundai Motor CEO warns of Chinese vehicle surge in the US without guardrails - Reuters",
+   "judge": "low",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "US government website used AI search tool from China that FBI said copied Anthropic - Reuters",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "White House withdraws Trump’s nominee to lead ICE",
+   "judge": "low",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Red and Blue America Have Found Something to Agree On: Flock Cameras Must Go",
+   "judge": "info",
+   "borderline": false,
+   "llm": "low"
+  },
+  {
+   "title": "A DHS email raises new questions about the Trump administration's election plans",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "The FAA’s $875 Million Plan to Use AI to Ease Air-Traffic Woes",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "Farmer who voted for Trump says farmers are \"all just in survival mode\"",
+   "judge": "info",
+   "borderline": false,
+   "llm": "low"
+  },
+  {
+   "title": "Blanche warned of contempt risk in Epstein files case",
+   "judge": "info",
+   "borderline": false,
+   "llm": "low"
+  },
+  {
+   "title": "Exclusive: Scalise puts GOP high-water mark at 225 House seats",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "BYD, CATL, Xiaomi executives may join Xi's US visit, sources say - Reuters",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "JD Vance faces test in White House meeting with Israel-backing radio host",
+   "judge": "info",
+   "borderline": false,
+   "llm": "low"
+  },
+  {
+   "title": "Shark kills swimmer off Western Australian city beach",
+   "judge": "info",
+   "borderline": false,
+   "llm": "low"
+  },
+  {
+   "title": "SK Hynix's Solidigm unit is weighing NAND memory chip factory in US, sources say - Reuters",
+   "judge": "info",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "Google is helping write AI chatbot safety laws — while pushing for loopholes",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "How important is AI to the stock market? Warnings bring new scrutiny",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Oil's shrug emoji era",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "True or false: Trump's name is now on the Kennedy Center. The quiz has the answer",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "UN mission says grounds to believe US committed war crimes in Iran",
+   "judge": "high",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Philippines: At least 2 students killed in school shooting",
+   "judge": "high",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Minst seks drept og mange såret i skoleskyting på Filippinene",
+   "judge": "high",
+   "borderline": false,
+   "llm": "high"
+  },
+  {
+   "title": "Trafikkulykke på Riksvei 4: En er kritisk skadet",
+   "judge": "info",
+   "borderline": false,
+   "llm": "high"
+  },
+  {
+   "title": "French deficit widens, PM Lecornu delays hopes to reach 5% of GDP in 2027",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Citizens' initiative demanding restrictions on data centers reaches 50,000 signatures",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "Varsler endringer i EØS-arbeidet",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "Økning i minstepensjonen i dag",
+   "judge": "info",
+   "borderline": false,
+   "llm": "low"
+  },
+  {
+   "title": "Det Hvide Hus trækker nomineringen af ny ICE-chef tilbage",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "Fire nye byer skal være værter for Royal Run",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Oprah Winfrey packs out business event on first ever visit to Finland",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Slut med Pisa-test hvert tredje år",
+   "judge": "info",
+   "borderline": true,
+   "llm": "info"
+  },
+  {
+   "title": "Politiet ophæver afspærring på Dag Hammarskjölds Allé i København",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Minst tre drept i skoleskyting på Filippinene",
+   "judge": "high",
+   "borderline": false,
+   "llm": "high"
+  },
+  {
+   "title": "Finland set for weekend of sunny spells and scattered showers",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "37 mistænkte for ulovlig minearbejde dør i Nigeria",
+   "judge": "high",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Finland has second-highest rate of work-related stress, depression in EU",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Frykter valgkaos i USA",
+   "judge": "low",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "South Korea will not send military to support US war on Iran, defying Trump pressure",
+   "judge": "high",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Three dead in Philippines school shooting, including gunman",
+   "judge": "high",
+   "borderline": false,
+   "llm": "high"
+  },
+  {
+   "title": "Philippines school shooting: At least three killed including gunman",
+   "judge": "high",
+   "borderline": false,
+   "llm": "high"
+  },
+  {
+   "title": "UN investigators allege US war crimes in Iran, gross rights violations by Tehran - Al Arabiya English",
+   "judge": "high",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "‘I spend a bagful of money and don’t fill a bag’: the energy crisis hits Bangladesh",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Manus on Markets: Yen drops after Japan raises interest rates to 31-year high",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Trump administration again denies entry visas to Palestinian officials ahead of UN general assembly",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Verified video shows wreckage of Saudi fighter jet shot down over Yemen",
+   "judge": "high",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Video: Influencers accused of exploiting Nepal flood survivors",
+   "judge": "info",
+   "borderline": false,
+   "llm": "low"
+  },
+  {
+   "title": "News quiz of the week: September 18, 2026",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Israel would rather not watch NAZA",
+   "judge": "info",
+   "borderline": true,
+   "llm": "info"
+  },
+  {
+   "title": "‘Just ask Grok’: How ISIL is using Big Tech’s AI to build bombs",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Guggenheim Abu Dhabi tickets go on sale ahead of grand opening",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Dubai Parks and Resorts theme parks to reopen after six-month closure",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Indonesia acquires first aircraft carrier amid military upgrade",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Trump weighs renewed major attacks on Iran: Report - Al Arabiya English",
+   "judge": "high",
+   "borderline": true,
+   "llm": "critical"
+  },
+  {
+   "title": "‘Run! Get away!’: witnesses recount Israeli ‘double tap’ strike that killed child and medic in Gaza",
+   "judge": "high",
+   "borderline": true,
+   "llm": "critical"
+  },
+  {
+   "title": "Napster Is Back, and It Wants to Digitally Clone Teachers",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Waymo says Singapore will be its next international robotaxi city",
+   "judge": "info",
+   "borderline": false,
+   "llm": "low"
+  },
+  {
+   "title": "Best Open Earbuds (2026): Shokz, Bose, Soundcore, and More",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Why AI Isn’t Likely to Wipe Out Humanity With Bioweapons",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Zoro Coupon Codes: 20% Off September 2026",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "NordVPN Coupons: 75% Off, Plus 3 Months Free in September 2026",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "The specter of AI-enabled bioweapons is a wake-up call for biotech",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Jemalloc 5.4.0",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "The scourge of x86 emulation",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Pre-Greek: The lost language hidden within Ancient Greek",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Shapelearn Qwen 3.8 27B (13.1 GB VRAM)",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "The Download: mice with part-human brains and climate tech innovators",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Meet the innovators under 35 shaping climate tech",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "The AI Superintelligence Slowdown",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Google is helping write AI chatbot safety laws — while pushing for loopholes - NPR",
+   "judge": "info",
+   "borderline": false,
+   "llm": "medium"
+  },
+  {
+   "title": "OpenAI breached by researchers using Anthropic models - Financial Times",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Regularized Emphatic Temporal-Difference Learning: Stability under Constant Stepsizes",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "BioPhys-Bridge: A Benchmark for Interdisciplinary Scientific Reasoning in Physics-Grounded Biological Research",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "What Do We Expect from LLMs? Mapping the Design of LLM Benchmarks",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Position: It is Time to Virtualize Foundation Models with a Self-evolving Operating System Layer",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "What Do Current Systematic Generalization Tasks Miss? A Reasoning-Centered Analysis",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Measurements for understanding the pace of AI development inside frontier labs - Anthropic",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Anthropic says Claude now leads a quarter of work building its next AI models - Reuters",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "How Cooley is accelerating IPO work with ChatGPT - OpenAI",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Claude Code relaunches Projects to manage multiple AI agents in the cloud",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Microsoft AI CEO says AI threats are real, and Anthropic is making it worse",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "AI is feared globally as the destroyer of jobs",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Inside the suddenly explosive world of AI safety",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Bank of Japan raises interest rates to 31-year high, flags concerns over inflation",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Rising oil, rates and yields brew up stagflation cocktail for markets - Reuters",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Yen sinks after BoJ raises rates to highest level since 1995",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Oil prices fall for third day on Saudi Arabia supply hopes; U.S. crude briefly dips below $100",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Trump administration advances $24.3 billion fighter jet deal to Saudi Arabia as Houthis escalate attacks",
+   "judge": "high",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "OpenAI breached by researchers using Anthropic models",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Turkey steps in to support markets after fund liquidity crunch sparks selloff - Reuters",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Major airlines cut flights as higher jet fuel prices hit carriers",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Tech power players land seat at table for high-stakes dinner with Trump, Xi",
+   "judge": "low",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Tech leads Wall St to higher close as oil eases, Treasury yields dip - Reuters",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "Liechtenstein royals threaten lawsuit over dynasty reforms",
+   "judge": "info",
+   "borderline": false,
+   "llm": "low"
+  },
+  {
+   "title": "The 10-year Treasury is having its worst run in over 100 years. Why investors are buying bonds anyway. - MarketWatch",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "Anthropic and OpenAI hunt for smaller data center deals, sources tell CNBC, in race to deploy AI capacity",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "America's job and housing markets are stuck. What if that's the new normal?",
+   "judge": "info",
+   "borderline": true,
+   "llm": "info"
+  },
+  {
+   "title": "I always wanted grandchildren. AI and an uncertain future have complicated that dream.",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "I'm job searching in my 50s after a 17-year career break. I feel like I'm sending my résumé into a black hole.",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "I moved from Indiana to New Mexico for a sunnier life. My social life, mood, and physical activity level have gotten a major uplift.",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Why 'The Diary of a CEO' star Steven Bartlett says he can't do his job without X — and isn't a Mark Zuckerberg fan",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Joining the dots between big AI",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "INSIGHT: Oil price pullback masks lingering physical crude scarcity - ICIS",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Oil prices fall as Saudi supply hopes outweigh fresh Houthi strikes - CNBC",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Gold and Silver Price Forecast: Oil Pullback Eases Inflation Fears - FXEmpire",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "Average heating oil price in Maine up 74% from a year ago, state agency says - WMTW",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "Silver price today, Thursday, September 17, 2026: Silver prices stay steady post Fed decision - finance.yahoo.com",
+   "judge": "info",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "Denouement to the Latest Oil Price Scare - Robin J Brooks | Substack",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "NYMEX: Precious Metals Prices Up - 17-09-26 - Armenpress",
+   "judge": "info",
+   "borderline": true,
+   "llm": "info"
+  },
+  {
+   "title": "Silver Price Forecast: Bulls threaten bearish setup after Fed hike - FXStreet",
+   "judge": "info",
+   "borderline": true,
+   "llm": "info"
+  },
+  {
+   "title": "Gold price rebounds above $4,340 as lower oil eases rate pressure - Kitco PM Report - KITCO",
+   "judge": "low",
+   "borderline": true,
+   "llm": "info"
+  },
+  {
+   "title": "Interagency Effort Enables Airlift Support to Kauai Following Hurricane",
+   "judge": "low",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "NORAD F-16s Deploy to High North Under Operation Arctic Vanguard",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Department Releases Guidance on Implementing Testosterone Deficiency Screenings for Male Service Members",
+   "judge": "info",
+   "borderline": false,
+   "llm": "low"
+  },
+  {
+   "title": "Federal Reserve issues FOMC statement",
+   "judge": "low",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Guterres calls for action as hate speech spreads across new platforms online",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "RESTORING AMERICAN SALTWATER ANGLING AND RECREATION",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Reinvigorating America’s Hunting Heritage",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "SEC Issues “Innovation Exemption” to Facilitate the Trading of Tokenized NMS Stock and Request for Comment",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "Montenegro - U.S. Department of State (.gov)",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "- webgels.state.gov",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Withdrawals Sent to the Senate",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Macau - U.S. Department of State (.gov)",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Presidential Message on National Hispanic Heritage Month",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Mitsubishi Electric CC-Link IE TSN Communication Protocol (Update A)",
+   "judge": "low",
+   "borderline": true,
+   "llm": "info"
+  },
+  {
+   "title": "Mitsubishi Electric GX Works3 and Motion Control Settings",
+   "judge": "low",
+   "borderline": true,
+   "llm": "info"
+  },
+  {
+   "title": "DRC: Opposition leaders condemn death of politician during 15 September protest",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "At least 37 suspected illegal miners die in custody in central Nigeria",
+   "judge": "high",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Serial killer suspicions in South Africa",
+   "judge": "low",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "DR Congo says Ebola outbreak has passed its peak",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Tigray: 20,000 university students relocated by conflict",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Missile-shaped signs and Netanyahu masks as Israelis rally to protect October vote",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Protesters target OpenAI and Anthropic in San Francisco over AI safety fears",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "US approves $414M uranium investment in Niger, two years after troops left - Al Jazeera",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "US seals big uranium investment in Niger, two years after troops left - Reuters",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Zimbabwe farmers brace for El Niño by saving water",
+   "judge": "info",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "South Africa's rand holds steady ahead of inflation data, expected rate hike - Reuters",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "Au Maroc, l’héritage bénéfique de la crise de la BNDE",
+   "judge": "info",
+   "borderline": false,
+   "llm": "low"
+  },
+  {
+   "title": "Why Nigeria’s Soldiers Went to Libreville",
+   "judge": "info",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Over 20 feared trapped in Taraba mining pit collapse",
+   "judge": "high",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Illegal Mining: Niger sets up panel to probe deaths of 37 detainees in NSCDC custody, commandant suspended",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Amnesty demands independent probe into deaths of miners in Niger",
+   "judge": "low",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Police order probe as 37 suspected illegal miners die in NSCDC custody",
+   "judge": "high",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Under pressure from Trump on cartels, Sheinbaum turns spotlight on US drug use",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "UN Mission: Venezuela’s Repressive Apparatus Remains Intact",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Abinader announces the end of the blockade of Dominican products at the border; Haiti remains silent",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Early voting begins in US midterms that could see Republicans lose control of Congress",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "Fire damages 108 stalls in Acapulco’s Central Market",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "As Puerto Vallarta grows, officials weigh crocodile relocation plan",
+   "judge": "info",
+   "borderline": false,
+   "llm": "low"
+  },
+  {
+   "title": "CFE’s ‘Project Oasis’ aims to bring solar power to an energy-challenged region of Baja California Sur",
+   "judge": "info",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "The Canada-EU partnership 'a classic win-win situation', economist says",
+   "judge": "info",
+   "borderline": false,
+   "llm": "low"
+  },
+  {
+   "title": "Canada’s Carney embraces EU associate membership proposal",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Fear and broken families: Inside a Texas ICE detention centre",
+   "judge": "info",
+   "borderline": true,
+   "llm": "info"
+  },
+  {
+   "title": "A dog dressed as a taco stand wins Morelia’s pre-Grito Patriotic Pup Contest",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Los Mirlos – Song of the Day",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Rare Aztec manuscript returns to Mexico on loan after nearly two centuries in France",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Latin America: The Dangerous Revision of Historical Memory",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "International News Briefs for Thursday, September 17, 2026",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Haiti - Leisure : Did you know ? #60",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Zapping Haiti of September 17, 2026",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Cuba: When an Everyday Activity Is No Longer Normal",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Haiti - Honduras : An ONI delegation presents DELIDOC's progress.",
+   "judge": "info",
+   "borderline": true,
+   "llm": "info"
+  },
+  {
+   "title": "Exxon raises 2050 global emissions forecast, sees slower coal decline - Reuters",
+   "judge": "low",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Energy disruption hits Bangladesh and Pakistan as Gulf crisis worsens - Reuters",
+   "judge": "high",
+   "borderline": true,
+   "llm": "critical"
+  },
+  {
+   "title": "ISU ‘powering Idaho’s energy future’ with second nuclear reactor - East Idaho News",
+   "judge": "info",
+   "borderline": false,
+   "llm": "low"
+  },
+  {
+   "title": "2026 Update: Who in Africa is Ready for Nuclear Power? - Energy for Growth Hub",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "SOAR event connects Knott County residents with nuclear energy jobs - WYMT",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Oops - Nuclear Energy Agency (NEA)",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Russian Offensive Campaign Assessment, September 17, 2026 - Institute for the Study of War",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "By Nearly Every Metric, the U.S. Is Losing the Iran War",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Why Eurasia, Not the Indo-Pacific, Matters Most in Next Phase of Taiwan Deterrence",
+   "judge": "info",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Latin America’s Balancing Act: Washington, Beijing, and the Post-Maduro Environment",
+   "judge": "info",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Trump’s Risky Hack-Back Plan",
+   "judge": "info",
+   "borderline": false,
+   "llm": "medium"
+  },
+  {
+   "title": "Ukraine can do more to counter Russia’s illicit finance threat",
+   "judge": "info",
+   "borderline": false,
+   "llm": "medium"
+  },
+  {
+   "title": "Putin is escalating against NATO but a Baltic incursion remains unlikely",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "The Lives Built on Colombia’s Peace Deal Are at Risk",
+   "judge": "info",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Macron won the argument over European strategic autonomy. Will better European defense come of it?",
+   "judge": "info",
+   "borderline": false,
+   "llm": "medium"
+  },
+  {
+   "title": "Fortifying USMCA through US–Mexico investment screening coordination",
+   "judge": "info",
+   "borderline": false,
+   "llm": "low"
+  },
+  {
+   "title": "What von der Leyen’s SOTU speech got right about energy—and where the EU still needs to pivot",
+   "judge": "info",
+   "borderline": false,
+   "llm": "low"
+  },
+  {
+   "title": "A Body Blow? The War on Iran and U.S. Military Readiness",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "info"
+  },
+  {
+   "title": "America's Attrition Trap",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "info"
+  },
+  {
+   "title": "Ebola Is Only the Beginning",
+   "judge": "info",
+   "borderline": true,
+   "llm": "info"
+  },
+  {
+   "title": "Uber plans more than 250 layoffs at San Francisco headquarters - San Francisco Chronicle",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "Layoffs continue at Wells Fargo Jordan Creek campus amid AI shakeup - The Des Moines Register",
+   "judge": "low",
+   "borderline": true,
+   "llm": "info"
+  },
+  {
+   "title": "UMaine weighs staff layoffs amid $19 million budget shortfall - WMTW",
+   "judge": "info",
+   "borderline": true,
+   "llm": "info"
+  },
+  {
+   "title": "Coast Guard boards US-bound vessels apparently compromised by hackers, officials say",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Navy Wants Containerized, Low-cost Interceptors to Defeat Cruise Missiles, Drones - USNI News",
+   "judge": "low",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "F-16 Crashes In Michigan",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "US clears $24B F-35 sale for Saudi Arabia",
+   "judge": "high",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Finland Practices Ship Boardings at Sea to Stop Undersea Sabotage",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "US Navy should target carriers in fight with China, report says",
+   "judge": "info",
+   "borderline": true,
+   "llm": "high"
+  },
+  {
+   "title": "Pentagon Cuts New AIM-260 Air-To-Air Missile Production Deal, Testing Accelerating",
+   "judge": "low",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "US Air Force to extend service of B-1, B-2 bombers, official says",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "The US Army is looking for new drones to ferry blood supplies",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "Lockheed Martin gets first batch of Patriot interceptor parts from General Motors",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "Newport News Navy barracks to receive $1.7 billion upgrade",
+   "judge": "info",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "The Air Force wants a cannon to shoot down drones",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "‘They overreached’: Amid industry worry, new Feinberg memo tweaks accounting regime",
+   "judge": "low",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "More LNG Getting Through Hormuz as Producers Push for Transits",
+   "judge": "medium",
+   "borderline": true,
+   "llm": "critical"
+  },
+  {
+   "title": "Chinese Scientists Develop New Oil Refining Method That Cuts Energy Use by 90%",
+   "judge": "info",
+   "borderline": false,
+   "llm": "low"
+  },
+  {
+   "title": "New Cat Species Identified for the First Time in Over 100 Years–Meet the Tilcayo",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "In Remote Alaska, the Promise and Limits of Vertical Farming",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Good News in History, September 18",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "What went right this week: the good news that matters",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Berlin’s REWE supermarket: the grocery store with a working rooftop farm",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Team Sequesters Plastic and Makes New Products Before it Breaks Down in Environment",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Scientists Solve Mystery Behind Snowfall That Dropped 695 Billion Tons of Ice on Antarctica",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "The World Is Getting Noisier — But We Can Change That",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Chinese companies doubled down on science after US tech restrictions",
+   "judge": "info",
+   "borderline": false,
+   "llm": "medium"
+  },
+  {
+   "title": "Chile First in South America to Eliminate Dog-Transmitted Rabies",
+   "judge": "info",
+   "borderline": true,
+   "llm": "low"
+  },
+  {
+   "title": "Cognitive resilience helps to predict Alzheimer’s dementia",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "The Next Frontier Is Not Artificial Intelligence—It’s Artificial Societies",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "US Solar Capacity Can Now Power More Than 50 Million Homes",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "First Brain Implant Translates Speech and Gestures at Once",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "This popular fermented food may help flush nanoplastics from the body",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Scientists discover a mysterious new frog hiding in the Amazon",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "A $100 detector can see invisible particles raining down from space",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Astronomers just found the youngest known planet ever",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "JWST’s mysterious little red dots may be black holes growing at incredible speeds",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  },
+  {
+   "title": "Tapanuli orangutans face mining, landslides, and fire threats — with no recovery plan",
+   "judge": "info",
+   "borderline": false,
+   "llm": "high"
+  },
+  {
+   "title": "Heavy rain and floods in northern Vietnam submerge homes and disrupt economy",
+   "judge": "high",
+   "borderline": true,
+   "llm": "medium"
+  },
+  {
+   "title": "Now exempt from EU deforestation rules, leather industry moves to repair reputation",
+   "judge": "info",
+   "borderline": false,
+   "llm": "low"
+  },
+  {
+   "title": "India’s tiger success brings a new challenge: Living alongside the big cats",
+   "judge": "info",
+   "borderline": false,
+   "llm": "low"
+  },
+  {
+   "title": "Mekong’s Irrawaddy dolphins find cautious hope amid a river in crisis",
+   "judge": "info",
+   "borderline": false,
+   "llm": "info"
+  }
+ ]
+}
