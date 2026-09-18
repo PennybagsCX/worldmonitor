@@ -26,7 +26,8 @@ const args = Object.fromEntries(
     return [k, v.join(' ') || 'true'];
   }),
 );
-const VARIANTS = (args.variants ?? 'full,tech,finance,happy,commodity').split(',');
+// Per-variant digests are short-lived request caches, so only `full` is reliably present.
+const VARIANTS = (args.variants ?? 'full').split(',');
 const LIMIT = Number(args.limit ?? 300);
 // Captured outputs are single-request outputs, so a replay can only score that shape.
 const SHAPES = args.replay ? ['single'] : (args.shapes ?? 'single,batch').split(',');
@@ -58,13 +59,20 @@ const cacheKey = (title) =>
 async function loadLabelledTitles() {
   const titles = new Map();
   for (const variant of VARIANTS) {
-    const digest = parseMaybe(await redis(['GET', `news:digest:v1:${variant}:en`]));
+    const digestKey = `news:digest:v1:${variant}:en`;
+    const digest = parseMaybe(await redis(['GET', digestKey]));
     const payload = digest?.data ?? digest;
+    // A variant that silently contributes nothing skews the sample toward the others.
+    if (!payload?.categories || typeof payload.categories !== 'object') {
+      throw new Error(`no usable digest for variant "${variant}" at ${digestKey}; drop it from --variants to evaluate without it`);
+    }
+    const before = titles.size;
     for (const bucket of Object.values(payload?.categories ?? {})) {
       for (const item of bucket?.items ?? []) {
         if (item?.title && !titles.has(item.title)) titles.set(item.title, variant);
       }
     }
+    console.error(`  ${variant}: ${titles.size - before} new titles`);
   }
   const all = [...titles.keys()];
   const labelled = [];
@@ -132,6 +140,8 @@ function score(rows, out, calls, wallMs) {
   const confusion = Object.fromEntries(THREAT_LEVELS.map((a) => [a, Object.fromEntries(THREAT_LEVELS.map((b) => [b, 0]))]));
   for (const r of answered) confusion[r.llm.l][r.jev.l]++;
   const llmAlerts = answered.filter((r) => isAlert(r.llm.l));
+  // Titles Jev never answered escalate too, so their reference alerts count as recalled.
+  const allLlmAlerts = rows.filter((r) => isAlert(r.llm.l));
   const jevAlerts = answered.filter((r) => isAlert(r.jev.l));
   const within1 = answered.filter((r) => Math.abs(THREAT_LEVELS.indexOf(r.llm.l) - THREAT_LEVELS.indexOf(r.jev.l)) <= 1);
 
@@ -144,7 +154,7 @@ function score(rows, out, calls, wallMs) {
       keptLevelAgreePct: pct(kept.filter((r) => r.jev.l === r.llm.l).length, kept.length),
       // Escalated titles get the LLM label by construction, so only kept misses cost recall.
       alertRecallAfterEscalationPct: pct(
-        llmAlerts.length - keptLlmAlerts.filter((r) => !isAlert(r.jev.l)).length, llmAlerts.length),
+        allLlmAlerts.length - keptLlmAlerts.filter((r) => !isAlert(r.jev.l)).length, allLlmAlerts.length),
       keptJevAlertsLlmDisagrees: kept.filter((r) => isAlert(r.jev.l) && !isAlert(r.llm.l)).length,
     };
   });
