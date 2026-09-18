@@ -75,12 +75,17 @@
 // the discovery branch and the transport 405 return ahead of
 // applyAnonDiscoveryLimit (the replay-shaped GET stops at auth). Step 0 adds
 // one challenged initialize (stops before a limiter) and one limiter-counted
-// keyless tools/list per host. The variant probes (6) add one limiter-counted
+// keyless tools/list per host, plus two keyless `get_sources` calls per host
+// for the structuredContent probe: those count against the free tool's own
+// 10/min/IP ceiling, not the discovery bucket (4 per run, both hosts sharing
+// the runner IP; a 429 there is reported as a skip). The variant probes (6) add one limiter-counted
 // ping plus four GET/HEADs per variant host; redirect, stream-open, and
 // unauthenticated replay all stop before a limiter.
 //
 // Usage: node scripts/mcp-live-smoke.mjs
 //   MCP_SMOKE_HOSTS=https://a,https://b  overrides the default host list.
+
+import { isDeepStrictEqual } from 'node:util';
 
 import {
   collectRequiredCapabilityFailures,
@@ -283,8 +288,8 @@ async function probeStatelessKeylessList(host) {
 //     `{ projection }`, because the field has to be a JSON object.
 async function probeStructuredContent(host) {
   for (const [label, args, matches] of [
-    ['plain', {}, (sc, parsed) => JSON.stringify(sc) === JSON.stringify(parsed)],
-    ['projection', { jmespath: 'view' }, (sc, parsed) => JSON.stringify(sc) === JSON.stringify({ projection: parsed })],
+    ['plain', {}, (sc, parsed) => isDeepStrictEqual(sc, parsed)],
+    ['projection', { jmespath: 'view' }, (sc, parsed) => isDeepStrictEqual(sc, { projection: parsed })],
   ]) {
     const check = `tools/call get_sources on ${TRANSPORT_PATH} returns structuredContent (${label})`;
     checks += 1;
