@@ -8,12 +8,16 @@ import { ApiError, ValidationError } from '../../../../src/generated/server/worl
 
 import {
   requirePremiumRpcAccess,
+  resolvePremiumCallerIdentity,
 } from '../../../_shared/premium-check';
 import { getRawJson } from '../../../_shared/redis';
-
-// Matches jobIds produced by run-scenario.ts: `scenario:{13-digit-ts}:{8-char-suffix}`.
-// Guards `GET /scenario-result/{jobId}` against path-traversal via crafted jobId.
-const JOB_ID_RE = /^scenario:\d{13}:[a-z0-9]{8}$/;
+import {
+  JOB_ID_RE,
+  OWNER_TOKEN_RE,
+  scenarioOwnerKey,
+  scenarioOwnerToken,
+  scenarioResultKey,
+} from './scenario-job';
 
 interface WorkerResultEnvelope {
   status?: string;
@@ -131,10 +135,33 @@ export async function getScenarioStatus(
     throw new ValidationError([{ field: 'jobId', description: 'Invalid or missing jobId' }]);
   }
 
-  // Worker writes under the raw (unprefixed) key, so we must read raw.
+  const identity = await resolvePremiumCallerIdentity(ctx.request);
+  const caller = scenarioOwnerToken(identity, ctx.request);
+  if (!caller) {
+    throw new ApiError(403, 'PRO subscription required', '');
+  }
+
+  // Owner is written at enqueue. A missing or unreadable binding is pending,
+  // not 404, so unknown ids stay indistinguishable from jobs still queued.
+  // A present binding for a different principal is 404 — the poll URL is not
+  // a capability token.
+  let storedOwner: unknown;
+  try {
+    storedOwner = await getRawJson(scenarioOwnerKey(jobId));
+  } catch {
+    throw new ApiError(502, 'Failed to fetch job status', '');
+  }
+  if (typeof storedOwner !== 'string' || !OWNER_TOKEN_RE.test(storedOwner)) {
+    return { status: 'pending', error: '' };
+  }
+  if (storedOwner !== caller) {
+    throw new ApiError(404, 'Scenario job not found', '');
+  }
+
+  // Worker writes under the raw (unprefixed) owner-scoped key, so we must read raw.
   let envelope: WorkerResultEnvelope | null = null;
   try {
-    envelope = await getRawJson(`scenario-result:${jobId}`) as WorkerResultEnvelope | null;
+    envelope = await getRawJson(scenarioResultKey(storedOwner, jobId)) as WorkerResultEnvelope | null;
   } catch {
     throw new ApiError(502, 'Failed to fetch job status', '');
   }

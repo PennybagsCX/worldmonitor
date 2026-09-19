@@ -26800,7 +26800,7 @@ paths:
                   example: "scenario:1717200000000:abcd1234"
                   schema:
                     type: string
-                    pattern: '^scenario:[0-9]{13}:[a-z0-9]{8}$'
+                    pattern: '^scenario:[0-9]{13}:([a-f0-9]{32}|[a-z0-9]{8})$'
                 - name: jmespath
                   in: query
                   description: |-
@@ -52872,7 +52872,7 @@ components:
             properties:
                 jobId:
                     type: string
-                    pattern: ^scenario:[0-9]{13}:[a-z0-9]{8}$
+                    pattern: ^scenario:[0-9]{13}:([a-f0-9]{32}|[a-z0-9]{8})$
                     description: |-
                         Job id of the form `scenario:{epoch_ms}:{8-char-suffix}`. Path-traversal
                          guarded by JOB_ID_RE in the handler.
