@@ -387,7 +387,7 @@ async function requeueOrphanedJobs() {
 // ────────────────────────────────────────────────────────────────────────────
 
 const JOB_ID_RE = /^scenario:\d{13}:(?:[a-f0-9]{32}|[a-z0-9]{8})$/;
-const OWNER_TOKEN_RE = /^[a-z0-9]{1,16}$/;
+const OWNER_TOKEN_RE = /^[a-f0-9]{64}$/;
 
 /** Owner-scoped result key. Null when jobId or owner would be an unsafe key fragment. */
 export function scenarioResultKey(jobId, owner) {

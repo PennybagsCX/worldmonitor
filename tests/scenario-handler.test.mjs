@@ -14,7 +14,6 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { hashKeySync } from '../server/_shared/usage-identity.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
@@ -34,8 +33,14 @@ function proCtx() {
   return makeCtx({ 'X-WorldMonitor-Key': 'pro-test-key' });
 }
 
-const PRO_OWNER = hashKeySync('key:pro-test-key');
 const LEGACY_JOB_ID = 'scenario:1712345678901:abcdefgh';
+
+async function sha256Hex(value) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+const PRO_OWNER = await sha256Hex('key:pro-test-key');
 
 function statusFetch(jobId, envelope) {
   return async (url) => {
@@ -281,7 +286,7 @@ describe('ScenarioService handlers', () => {
 
     it('returns 404 when the stored owner is a different principal', async () => {
       const jobId = 'scenario:1712345678901:abcdefgh';
-      const otherOwner = hashKeySync('key:someone-else');
+      const otherOwner = await sha256Hex('key:someone-else');
       globalThis.fetch = async (url) => {
         const key = decodeURIComponent(String(url).split('/get/')[1] ?? '');
         if (key === `scenario-owner:${jobId}`) {

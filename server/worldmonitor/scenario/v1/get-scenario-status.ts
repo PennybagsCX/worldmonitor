@@ -136,7 +136,7 @@ export async function getScenarioStatus(
   }
 
   const identity = await resolvePremiumCallerIdentity(ctx.request);
-  const caller = scenarioOwnerToken(identity, ctx.request);
+  const caller = await scenarioOwnerToken(identity, ctx.request);
   if (!caller) {
     throw new ApiError(403, 'PRO subscription required', '');
   }

@@ -300,11 +300,13 @@ describe('scenario worker manifest and evidence', () => {
 
 describe('scenario result key', () => {
   it('scopes results to a validated owner and rejects unsafe fragments', () => {
+    const owner = 'a'.repeat(64);
     const jobId = 'scenario:1712345678901:' + 'ab'.repeat(16);
-    assert.equal(scenarioResultKey(jobId, 'oo3b5v1bl1cc0'), `scenario-result:oo3b5v1bl1cc0:${jobId}`);
-    assert.equal(scenarioResultKey('scenario:1712345678901:abcdefgh', 'abc'), 'scenario-result:abc:scenario:1712345678901:abcdefgh');
+    assert.equal(scenarioResultKey(jobId, owner), `scenario-result:${owner}:${jobId}`);
+    assert.equal(scenarioResultKey('scenario:1712345678901:abcdefgh', owner), `scenario-result:${owner}:scenario:1712345678901:abcdefgh`);
     assert.equal(scenarioResultKey(jobId, ''), null);
+    assert.equal(scenarioResultKey(jobId, 'oo3b5v1bl1cc0'), null);
     assert.equal(scenarioResultKey(jobId, '../owner'), null);
-    assert.equal(scenarioResultKey('scenario:1:abcdefgh', 'abc'), null);
+    assert.equal(scenarioResultKey('scenario:1:abcdefgh', owner), null);
   });
 });

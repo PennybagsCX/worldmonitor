@@ -58,7 +58,7 @@ export async function runScenario(
   }
 
   const identity = await resolvePremiumCallerIdentity(ctx.request);
-  const owner = scenarioOwnerToken(identity, ctx.request);
+  const owner = await scenarioOwnerToken(identity, ctx.request);
   if (!owner) {
     throw new ApiError(403, 'PRO subscription required', '');
   }
