@@ -36,6 +36,13 @@
 //       8=canonicalMaxGeneratedAtIso 9=canonicalNegativeTtlSeconds.
 // Returns 1 when written, 0 when the live snapshot was kept, -1 when the
 // candidate has no servable items.
+//
+// isNarrower: breadth is strict, depth has a floor. The `80` is
+// LASTGOOD_MIN_ITEM_PCT from _lastgood.ts, written as a literal because the
+// docker proxy allowlists this exact text; tests/digest-lastgood.test.mts pins
+// the literal to the constant. Integer arithmetic (`* 100 < * 80`) so Lua's
+// doubles and JS decide identically. A strict `items <` froze the live digest
+// for ~6h on 2026-09-19 (a 289-item build kept losing to a 294-item incumbent).
 export const DIGEST_LASTGOOD_PUBLISH_SCRIPT = [
   'local revoked = {}',
   "for _, url in ipairs(redis.call('SMEMBERS', KEYS[2])) do revoked[url] = true end",
@@ -65,7 +72,7 @@ export const DIGEST_LASTGOOD_PUBLISH_SCRIPT = [
   '  return 0',
   'end',
   'local function isNarrower(nextData, currentData)',
-  '  return nextData.categories < currentData.categories or nextData.items < currentData.items',
+  '  return nextData.categories < currentData.categories or nextData.items * 100 < currentData.items * 80',
   'end',
   'local function isLiveCanonicalClock(value)',
   "  if type(value) ~= 'string' then return false end",

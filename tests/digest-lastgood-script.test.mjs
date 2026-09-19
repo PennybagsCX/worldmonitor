@@ -403,6 +403,27 @@ describe('durable last-good publish gate — executed, not described (#7084)', (
     assert.equal(result, 0, 'breadth parity is not enough — depth must not regress either');
   });
 
+  // Production, 2026-09-19: the `full` digest froze for ~6h because a fresh 289-item
+  // build was rejected against a 294-item incumbent (17 categories each). Item counts
+  // drift a few percent build to build, so a strict `<` ratchets the digest to its
+  // high-water mark and then serves it stale until it ages out.
+  const links = (n, host) => Array.from({ length: n }, (_, i) => `https://${host}.test/${i}`);
+
+  it('replaces a live incumbent when the candidate is only slightly shallower (289 vs 294)', () => {
+    const { result, redis } = publish({
+      data: bodyOf(links(289, 'fresh')),
+      initial: { [BODY_KEY]: snapshot(bodyOf(links(294, 'old')), NOW - 4 * 60 * 60 * 1000) },
+    });
+    assert.equal(result, 1, 'ordinary drift in item count must not freeze the digest');
+    assert.equal(JSON.parse(redis.store.get(BODY_KEY)).itemCount, 289);
+  });
+
+  it('draws the depth line at 80% of the incumbent, inclusive', () => {
+    const incumbent = { [BODY_KEY]: snapshot(bodyOf(links(100, 'old')), NOW - 60_000) };
+    assert.equal(publish({ data: bodyOf(links(80, 'fresh')), initial: incumbent }).result, 1, '80 of 100 replaces');
+    assert.equal(publish({ data: bodyOf(links(79, 'fresh')), initial: incumbent }).result, 0, '79 of 100 is materially shallower');
+  });
+
   it('replaces an incumbent past the six-hour window', () => {
     const incumbent = bodyOf(['https://a.test/1', 'https://a.test/2']);
     const { result } = publish({

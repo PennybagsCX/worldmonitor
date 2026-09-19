@@ -263,6 +263,22 @@ export async function readAcceptedSnapshot<T extends DigestLike>(variant: string
 }
 
 /**
+ * A fresh build lost to the live snapshot. The requester still gets the fresh
+ * body; everyone else keeps the older one until a build clears the gate or the
+ * snapshot ages out. That is correct for a degraded build and invisible when
+ * it is wrong: on 2026-09-19 it froze `full` for ~6h with only a console.log.
+ * One Sentry issue per variant, at warning level.
+ */
+function reportGateRejection(variant: string, lang: string): void {
+  console.log(`[digest-publication] candidate rejected by acceptance gate variant=${variant} lang=${lang}`);
+  captureSilentError(new Error('fresh digest rejected by the last-good acceptance gate'), {
+    tags: { surface: 'news', component: 'digest-lastgood', stage: 'publish-gate', variant, lang },
+    fingerprint: ['digest-lastgood', 'publish-gate-rejected', variant],
+    level: 'warning',
+  });
+}
+
+/**
  * Publish a valid unfiltered body. The Redis script computes both candidate
  * and incumbent richness against one atomic SMEMBERS view before it writes.
  */
@@ -334,7 +350,7 @@ export async function publishAcceptedSnapshot(
             return 'unavailable';
           }
         }
-        console.log(`[digest-publication] candidate rejected by acceptance gate variant=${variant} lang=${lang}`);
+        reportGateRejection(variant, lang);
         return 'rejected';
       }
       const meta: AcceptedSnapshotMeta = { acceptedAt, ...candidateRichness };
@@ -385,7 +401,7 @@ export async function publishAcceptedSnapshot(
       console.warn(`[digest-publication] publish unavailable variant=${variant} lang=${lang}`);
       return 'unavailable';
     } else if (outcome.result === 0) {
-      console.log(`[digest-publication] candidate rejected by acceptance gate variant=${variant} lang=${lang}`);
+      reportGateRejection(variant, lang);
       return 'rejected';
     } else if (outcome.result === -1) {
       console.log(`[digest-publication] candidate rejected after revocations variant=${variant} lang=${lang}`);

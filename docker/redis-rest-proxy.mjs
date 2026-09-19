@@ -132,7 +132,7 @@ const DIGEST_LASTGOOD_PUBLISH_SCRIPT = [
   '  return 0',
   'end',
   'local function isNarrower(nextData, currentData)',
-  '  return nextData.categories < currentData.categories or nextData.items < currentData.items',
+  '  return nextData.categories < currentData.categories or nextData.items * 100 < currentData.items * 80',
   'end',
   'local function isLiveCanonicalClock(value)',
   "  if type(value) ~= 'string' then return false end",

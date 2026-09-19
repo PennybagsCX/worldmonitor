@@ -27,6 +27,18 @@ export const LASTGOOD_TTL_S = 6 * 60 * 60;
 /** Same contract in ms, enforced on read even if a key's TTL drifted. */
 export const LASTGOOD_MAX_AGE_MS = LASTGOOD_TTL_S * 1000;
 
+/**
+ * Depth floor for replacing a live snapshot: a candidate needs at least this
+ * percentage of the incumbent's items. Healthy builds drift by a few percent
+ * (observed 294 -> 289, 212 -> 210, 173 -> 171); the collapse this gate exists
+ * to stop is an order of magnitude (one item per category). A strict `<` here
+ * froze the live `full` digest for ~6h on 2026-09-19: every fresh 289-item build
+ * lost to a 294-item incumbent. MIRRORED as a literal in
+ * shared/digest-lastgood-publish-script.mjs and docker/redis-rest-proxy.mjs;
+ * tests/digest-lastgood.test.mts pins all three to this value.
+ */
+export const LASTGOOD_MIN_ITEM_PCT = 80;
+
 /** Redis TTL for the latest-attempt metadata (outlives the snapshot on
  *  purpose so an operator can still see the last failure after the
  *  snapshot expired). */
@@ -171,11 +183,14 @@ export function shouldReplaceAccepted(
   // "Materially narrower" is two-dimensional: a candidate must not regress on
   // breadth (categories) OR depth (items). Comparing categories alone let a
   // digest with one item per category replace a live one holding hundreds.
+  // Breadth is strict: losing a whole category is never drift. Depth has a
+  // floor (LASTGOOD_MIN_ITEM_PCT), in integer arithmetic so the Lua twin
+  // decides identically.
   if (candidate.categoryCount < current.categoryCount) {
     return { replace: false, reason: `narrower-categories:${candidate.categoryCount}<${current.categoryCount}` };
   }
-  if (candidate.itemCount < current.itemCount) {
-    return { replace: false, reason: `narrower-items:${candidate.itemCount}<${current.itemCount}` };
+  if (candidate.itemCount * 100 < current.itemCount * LASTGOOD_MIN_ITEM_PCT) {
+    return { replace: false, reason: `narrower-items:${candidate.itemCount}<${LASTGOOD_MIN_ITEM_PCT}%of${current.itemCount}` };
   }
   return { replace: true, reason: 'not-narrower' };
 }

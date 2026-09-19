@@ -7,6 +7,7 @@ import { build } from 'esbuild';
 import {
   ATTEMPT_META_TTL_S,
   LASTGOOD_MAX_AGE_MS,
+  LASTGOOD_MIN_ITEM_PCT,
   LASTGOOD_TTL_S,
   REVOKED_URLS_KEY,
   attemptMetaKey,
@@ -108,8 +109,36 @@ describe('durable last-good policy (#7084)', () => {
     // one item per category could evict a live snapshot holding hundreds.
     assert.deepEqual(shouldReplaceAccepted(live, { categoryCount: 4, itemCount: 4 }, NOW), {
       replace: false,
-      reason: 'narrower-items:4<400',
+      reason: 'narrower-items:4<80%of400',
     });
+  });
+
+  it('ordinary drift in item count replaces -- a strict comparison froze the live digest', () => {
+    // Production, 2026-09-19: `full` served a 03:58 UTC body for ~6h. Fresh builds came
+    // back in 5s with 17 categories / 289 items and were each rejected against the
+    // 17 / 294 incumbent, which also parked a 120s rebuild cooldown every time.
+    const live = { acceptedAt: NOW - 4 * 60 * 60 * 1000, categoryCount: 17, itemCount: 294 };
+    assert.deepEqual(shouldReplaceAccepted(live, { categoryCount: 17, itemCount: 289 }, NOW), {
+      replace: true,
+      reason: 'not-narrower',
+    });
+  });
+
+  it('draws the depth line at LASTGOOD_MIN_ITEM_PCT of the incumbent, inclusive', () => {
+    assert.equal(LASTGOOD_MIN_ITEM_PCT, 80);
+    const live = { acceptedAt: NOW - 60_000, categoryCount: 4, itemCount: 100 };
+    assert.equal(shouldReplaceAccepted(live, { categoryCount: 4, itemCount: 80 }, NOW).replace, true);
+    assert.equal(shouldReplaceAccepted(live, { categoryCount: 4, itemCount: 79 }, NOW).replace, false);
+    // Breadth stays strict: losing a whole category is never "drift".
+    assert.equal(shouldReplaceAccepted(live, { categoryCount: 3, itemCount: 100 }, NOW).replace, false);
+  });
+
+  it('the Redis script and the sidecar gate share one threshold', async () => {
+    const { DIGEST_LASTGOOD_PUBLISH_SCRIPT } = await import('../shared/digest-lastgood-publish-script.mjs');
+    assert.match(
+      DIGEST_LASTGOOD_PUBLISH_SCRIPT,
+      new RegExp(`nextData\\.items \\* 100 < currentData\\.items \\* ${LASTGOOD_MIN_ITEM_PCT}\\b`),
+    );
   });
 
   it('a malformed stored snapshot reads as "no snapshot", never as an unreplaceable one', () => {
@@ -203,6 +232,9 @@ describe('durable last-good wiring (#7084)', () => {
     // read — the two were conflated and blanked the endpoint on preview
     // deploys and local dev runs.
     redisConfigured: true,
+    // Every captureSilentError call. Without a DSN the real reporter is a no-op, so
+    // "did this reach Sentry" is only observable through a stub.
+    captures: [] as Array<{ message: string; opts: any }>,
   };
   let mod: any;
 
@@ -254,6 +286,14 @@ describe('durable last-good wiring (#7084)', () => {
               : undefined;
           });
           b.onLoad({ filter: /.*/, namespace: 'redisstub' }, () => ({ contents: shim, loader: 'js' }));
+          b.onResolve({ filter: /_sentry-edge(\.js)?$/ }, () => ({ path: 'sentry-stub', namespace: 'sentrystub' }));
+          b.onLoad({ filter: /.*/, namespace: 'sentrystub' }, () => ({
+            contents: [
+              'const s = globalThis.__digestRedisStub;',
+              'export function captureSilentError(err, opts) { s.captures.push({ message: String(err?.message ?? err), opts }); return Promise.resolve(); }',
+            ].join('\n'),
+            loader: 'js',
+          }));
           b.onResolve({ filter: /response-headers$/ }, () => ({ path: 'headers-stub', namespace: 'headerstub' }));
           b.onLoad({ filter: /.*/, namespace: 'headerstub' }, () => ({
             contents: [
@@ -284,6 +324,7 @@ describe('durable last-good wiring (#7084)', () => {
     stub.fetchKeys.length = 0;
     stub.redisConfigured = true;
     stub.noCache.length = 0;
+    stub.captures.length = 0;
     mod.__testing__.fallbackDigestCache.clear();
     mod.__testing__.lastGoodStoreTesting.activeAttempts.clear();
     mod.__testing__.lastGoodStoreTesting.recentFailedAttempts.clear();
@@ -383,6 +424,32 @@ describe('durable last-good wiring (#7084)', () => {
     // Must not throw and must not fall back to plain writes.
     await mod.__testing__.publishAcceptedSnapshot('full', 'en', body(['https://a/1'], COVERAGE));
     assert.equal(stub.writes.filter((w) => w.key === lastGoodKey('full', 'en')).length, 0);
+  });
+
+  it('a gate rejection reaches Sentry as a warning; a fully-revoked candidate does not', async () => {
+    // The 2026-09-19 freeze ran ~6h with nothing alerting: the rejection was a
+    // console.log, and the relay relabelled the stale replay as `build-error`.
+    // With the depth floor a rejection now means a genuinely degraded build.
+    reset();
+    stub.pipeline = async () => [{ result: 0 }];
+    await mod.__testing__.publishAcceptedSnapshot('full', 'en', body(['https://a/1'], COVERAGE));
+    assert.equal(stub.captures.length, 1);
+    assert.match(stub.captures[0]!.message, /rejected by the last-good acceptance gate/);
+    assert.equal(stub.captures[0]!.opts.level, 'warning');
+    assert.deepEqual(stub.captures[0]!.opts.fingerprint, ['digest-lastgood', 'publish-gate-rejected', 'full']);
+    assert.deepEqual(stub.captures[0]!.opts.tags, {
+      surface: 'news', component: 'digest-lastgood', stage: 'publish-gate', variant: 'full', lang: 'en',
+    });
+
+    reset();
+    stub.pipeline = async () => [{ result: -1 }];
+    await mod.__testing__.publishAcceptedSnapshot('full', 'en', body(['https://a/1'], COVERAGE));
+    assert.equal(stub.captures.length, 0, 'an operator revocation is intended, not a degraded build');
+
+    reset();
+    stub.pipeline = async () => [{ result: 1 }];
+    await mod.__testing__.publishAcceptedSnapshot('full', 'en', body(['https://a/1'], COVERAGE));
+    assert.equal(stub.captures.length, 0);
   });
 
   it('reports distinct guarded-publication outcomes', async () => {
