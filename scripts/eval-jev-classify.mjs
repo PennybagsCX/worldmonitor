@@ -12,7 +12,9 @@
  * whenever JEV_MODEL or the criteria change:
  *   node --env-file=.env.local scripts/eval-jev-classify.mjs --golden tests/fixtures/jev-classify-golden-2026-09-18.json --shapes single
  * Add --capture to write that run's Jev outputs back into the golden file, so the
- * alert-gate sweep stays checkable without a paid call (--replay scores them offline).
+ * alert-gate sweep stays checkable without a paid call. --replay scores those
+ * captured outputs offline and requires --golden (no paid call, no Redis):
+ *   node --env-file=.env.local scripts/eval-jev-classify.mjs --golden tests/fixtures/jev-classify-golden-2026-09-18.json --replay
  *
  * --shadow-report reads the relay's shadow log (classify:jev-shadow:v1: every headline
  * where Jev's level disagreed with the LLM's cached label) and prints the alert flips
@@ -39,6 +41,10 @@ const LIMIT = Number(args.limit ?? 300);
 const SHAPES = args.replay ? ['single'] : (args.shapes ?? 'single,batch').split(',');
 const BATCH = Number(args.batch ?? 50);
 if (!Number.isInteger(BATCH) || BATCH < 1) { console.error(`--batch must be a positive integer, got ${args.batch}`); process.exit(2); }
+if (args.replay && !args.golden) {
+  console.error('--replay requires --golden <file>');
+  process.exit(2);
+}
 const SINGLE_CONCURRENCY = 25;
 const USD_PER_M_INPUT = 0.042;
 
