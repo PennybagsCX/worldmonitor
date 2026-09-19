@@ -33,10 +33,10 @@ const JEV_CONCURRENCY = 6;
 const JEV_TIMEOUT_MS = 5_000;
 const JEV_RETRY_STATUSES = new Set([429, 529]);
 const JEV_MAX_RETRY_WAIT_MS = 5_000;
-// This many titles in a row with no Jev answer means it is down or the key is
-// bad; stop paying its timeout per title for a while. Counted across chunks:
-// a warm cache leaves chunks of one or two titles, which would never trip a
-// per-chunk count.
+// This many CONSECUTIVE titles with no Jev answer means it is down, browning
+// out or the key is bad; stop paying its timeout per title for a while. The
+// streak carries across chunks: a warm cache leaves chunks of one or two
+// titles, which would never trip a per-chunk count.
 const JEV_BREAKER_MIN_ATTEMPTS = 5;
 const JEV_BREAKER_COOLDOWN_MS = 10 * 60 * 1000;
 const JEV_USER_AGENT = 'WorldMonitor-Relay/1.0';
@@ -108,9 +108,13 @@ function createShadowObserver({ env = process.env, fetchJevLabel: fetchLabel, re
     });
 
     const tally = { asked: subjects.length, answered: 0, agreed: 0, alertFlips: 0 };
+    let longestStreak = unansweredStreak;
     for (let i = 0; i < subjects.length; i++) {
       const answer = answers[i];
-      if (!answer) continue;
+      // Consecutive, in title order, across chunks: counted per chunk, one
+      // answer among 49 timeouts reset the streak and the pause never came.
+      if (!answer) { unansweredStreak += 1; longestStreak = Math.max(longestStreak, unansweredStreak); continue; }
+      unansweredStreak = 0;
       tally.answered += 1;
       const { title, level } = subjects[i];
       if (answer.l === level) { tally.agreed += 1; continue; }
@@ -121,9 +125,8 @@ function createShadowObserver({ env = process.env, fetchJevLabel: fetchLabel, re
       } catch { /* an unrecorded disagreement is a lost observation, nothing more */ }
     }
 
-    unansweredStreak = tally.answered > 0 ? 0 : unansweredStreak + tally.asked;
-    if (unansweredStreak >= JEV_BREAKER_MIN_ATTEMPTS) {
-      warn(`[Classify] Jev shadow answered none of the last ${unansweredStreak} titles; pausing it for ${JEV_BREAKER_COOLDOWN_MS / 60000}min`);
+    if (longestStreak >= JEV_BREAKER_MIN_ATTEMPTS) {
+      warn(`[Classify] Jev shadow answered none of the last ${JEV_BREAKER_MIN_ATTEMPTS} titles in a row; pausing it for ${JEV_BREAKER_COOLDOWN_MS / 60000}min`);
       pausedUntil = now() + JEV_BREAKER_COOLDOWN_MS;
       unansweredStreak = 0;
     }

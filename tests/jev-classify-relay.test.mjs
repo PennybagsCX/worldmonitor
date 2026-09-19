@@ -99,6 +99,18 @@ describe('Jev shadow observer', () => {
     assert.equal(h.asked.length, 10, 'resumes after the cooldown');
   });
 
+  it('pauses during a brownout too: one answer in a chunk must not reset the count', async () => {
+    // Counted per chunk, a single answer among 49 timeouts kept Jev "healthy"
+    // forever, and every chunk paid the timeout waves.
+    const h = harness({ labels: { T0: answer('low') } });
+    const chunk = Array.from({ length: 12 }, (_, i) => ({ title: `T${i}`, level: 'low' }));
+    const tally = await h.observe('full', chunk);
+    assert.equal(tally.answered, 1);
+    assert.match(h.warnings[0] ?? '', /answered none of the last 5 titles in a row/);
+    await h.observe('full', chunk);
+    assert.equal(h.asked.length, 12, 'paused after the first chunk');
+  });
+
   it('keeps at most 6 Jev requests in flight (TypeSafe allows 1,200/min)', async () => {
     let inFlight = 0;
     let peak = 0;

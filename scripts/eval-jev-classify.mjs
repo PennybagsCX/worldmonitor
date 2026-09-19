@@ -38,6 +38,7 @@ const LIMIT = Number(args.limit ?? 300);
 // Captured outputs are single-request outputs, so a replay can only score that shape.
 const SHAPES = args.replay ? ['single'] : (args.shapes ?? 'single,batch').split(',');
 const BATCH = Number(args.batch ?? 50);
+if (!Number.isInteger(BATCH) || BATCH < 1) { console.error(`--batch must be a positive integer, got ${args.batch}`); process.exit(2); }
 const SINGLE_CONCURRENCY = 25;
 const USD_PER_M_INPUT = 0.042;
 
@@ -122,7 +123,8 @@ async function callJev(titles) {
       signal: AbortSignal.timeout(60_000),
     }).catch((e) => ({ ok: false, status: 0, text: async () => String(e) }));
     if (r.ok) {
-      const body = await r.json();
+      const body = await r.json().catch(() => null);
+      if (!body) return { labels: [], ms: performance.now() - t0, tokens: 0, error: 'HTTP 200 with an unparseable body' };
       return { labels: parseJevAnswers(body, titles.length), ms: performance.now() - t0, tokens: body?.usage?.input_tokens ?? 0 };
     }
     if ((r.status === 429 || r.status === 529) && attempt < 3) {
