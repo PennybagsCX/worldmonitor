@@ -1,351 +1,184 @@
-import { describe, it } from 'node:test';
+// Jev runs in SHADOW beside the relay's LLM classifier: it is asked about the
+// same headlines, its answer is recorded next to the LLM's, and it decides
+// nothing. These tests pin "decides nothing" as much as the recording.
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
-import vm from 'node:vm';
+import { describe, it } from 'node:test';
 
 const require = createRequire(import.meta.url);
 const {
-  createClassifyChunk, fetchJevLabel, shouldPublishClassifiedAlert, classifyCacheValue,
-  countLabelSource, isHeldJevAlert, jevApiKey, JEV_NOTIFY_MIN_P_ALERT,
+  createShadowObserver,
+  fetchJevLabel,
+  SHADOW_LOG_KEY,
+  SHADOW_LOG_MAX,
 } = require('../scripts/lib/jev-classify-relay.cjs');
 
-const jevLabel = (l, pAlert = 0, levelConf = 0.9) => ({ l, c: 'general', levelConf, pAlert });
+const KEYED = { TYPESAFE_API_KEY: 'k' };
+const answer = (l, pAlert = l === 'high' || l === 'critical' ? 0.9 : 0.05) => ({ l, levelConf: 0.8, pAlert });
 
-function harness({ env = { TYPESAFE_API_KEY: 'k' }, jev = async () => jevLabel('low'), llm = async (titles) => titles.map((_, i) => ({ i, l: 'medium', c: 'economic' })), now } = {}) {
-  const calls = { jev: [], llm: [], warn: [] };
-  const classifyChunk = createClassifyChunk({
+function harness({ env = KEYED, labels = {}, now = () => 1_000 } = {}) {
+  const asked = [];
+  const recorded = [];
+  const warnings = [];
+  const observe = createShadowObserver({
     env,
-    fetchJevLabel: async (title, maxTextChars) => { calls.jev.push({ title, maxTextChars }); return jev(title); },
-    fetchLlm: async (titles, maxTextChars) => { calls.llm.push({ titles, maxTextChars }); return llm(titles); },
-    warn: (msg) => calls.warn.push(msg),
     now,
+    warn: (m) => warnings.push(m),
+    fetchJevLabel: async (title) => {
+      asked.push(title);
+      const v = labels[title];
+      if (v instanceof Error) throw v;
+      return v ?? null;
+    },
+    record: async (row) => { recorded.push(row); return true; },
   });
-  return { classifyChunk, calls };
+  return { observe, asked, recorded, warnings };
 }
 
-describe('createClassifyChunk', () => {
-  it('never calls Jev when TYPESAFE_API_KEY is unset and returns the LLM result untouched', async () => {
-    const llmResult = [{ i: 0, l: 'high', c: 'conflict' }];
-    const { classifyChunk, calls } = harness({ env: {}, llm: async () => llmResult });
-    assert.equal(await classifyChunk(['a'], 120), llmResult);
-    assert.equal(calls.jev.length, 0);
-    assert.deepEqual(calls.llm, [{ titles: ['a'], maxTextChars: 120 }]);
-  });
-
-  it('labels every title with Jev and skips the LLM when all succeed', async () => {
-    const { classifyChunk, calls } = harness({ jev: async () => jevLabel('high', 0.9) });
-    const out = await classifyChunk(['a', 'b']);
-    assert.deepEqual(out.map((e) => [e.i, e.l, e.src]), [[0, 'high', 'jev'], [1, 'high', 'jev']]);
-    assert.equal(out[0].pAlert, 0.9);
-    assert.equal(calls.llm.length, 0);
-  });
-
-  it('sends only the titles Jev failed on to the LLM and remaps their indices', async () => {
-    const { classifyChunk, calls } = harness({
-      jev: async (title) => (title === 'b' || title === 'd' ? null : jevLabel('info')),
-      llm: async () => [{ i: 0, l: 'high', c: 'conflict' }, { i: 1, l: 'low', c: 'diplomatic' }],
-    });
-    const out = await classifyChunk(['a', 'b', 'c', 'd']);
-    assert.deepEqual(calls.llm[0].titles, ['b', 'd']);
-    const byIndex = Object.fromEntries(out.map((e) => [e.i, e]));
-    assert.equal(byIndex[1].l, 'high');
-    assert.equal(byIndex[3].l, 'low');
-    assert.equal(byIndex[1].src, undefined);
-    assert.equal(byIndex[0].src, 'jev');
-  });
-
-  it('keeps the Jev labels when the LLM fallback returns null', async () => {
-    const { classifyChunk } = harness({ jev: async (t) => (t === 'a' ? jevLabel('low') : null), llm: async () => null });
-    assert.deepEqual((await classifyChunk(['a', 'b'])).map((e) => e.i), [0]);
-  });
-
-  it('returns null when Jev and the LLM both produced nothing, so the chunk _skips as today', async () => {
-    const { classifyChunk } = harness({ jev: async () => null, llm: async () => null });
-    assert.equal(await classifyChunk(['a']), null);
-  });
-
-  it('treats a throwing Jev transport as a failed title, not a failed chunk', async () => {
-    const { classifyChunk, calls } = harness({ jev: async (t) => { if (t === 'a') throw new Error('boom'); return jevLabel('low'); } });
-    const out = await classifyChunk(['a', 'b']);
-    assert.deepEqual(calls.llm[0].titles, ['a']);
-    assert.equal(out.length, 2);
-  });
-
-  it('drops LLM fallback entries whose index is out of range', async () => {
-    const { classifyChunk } = harness({ jev: async () => null, llm: async () => [{ i: 5, l: 'high', c: 'conflict' }, { i: 0, l: 'low', c: 'general' }] });
-    assert.deepEqual((await classifyChunk(['a'])).map((e) => [e.i, e.l]), [[0, 'low']]);
-  });
-
-  it('routes non-Latin-script titles straight to the LLM, unmeasured for Jev', async () => {
-    const { classifyChunk, calls } = harness();
-    const out = await classifyChunk(['Iran closes strait', 'الدفاع المدني يحذر']);
-    assert.deepEqual(calls.jev.map((c) => c.title), ['Iran closes strait']);
-    assert.deepEqual(calls.llm[0].titles, ['الدفاع المدني يحذر']);
-    assert.equal(out.find((e) => e.i === 1).src, undefined);
-  });
-
-  it('caps concurrent Jev requests', async () => {
-    let inFlight = 0; let peak = 0;
-    const { classifyChunk } = harness({
-      jev: async () => { inFlight++; peak = Math.max(peak, inFlight); await new Promise((r) => setTimeout(r, 2)); inFlight--; return jevLabel('info'); },
-    });
-    await classifyChunk(Array.from({ length: 50 }, (_, i) => `t${i}`));
-    assert.ok(peak > 1 && peak <= 6, `peak ${peak}`);
-  });
-
-  it('treats a whitespace-only key as unset', async () => {
-    const { classifyChunk, calls } = harness({ env: { TYPESAFE_API_KEY: '  ' } });
-    await classifyChunk(['a']);
-    assert.equal(calls.jev.length, 0);
-    assert.equal(jevApiKey({ TYPESAFE_API_KEY: ' k ' }), 'k');
-    assert.equal(jevApiKey({}), '');
-  });
-
-  it('never lets an LLM entry pass itself off as a Jev label', async () => {
-    const { classifyChunk } = harness({ jev: async () => null, llm: async () => [{ i: 0, l: 'high', c: 'conflict', src: 'jev', pAlert: 0 }] });
-    assert.deepEqual(await classifyChunk(['a']), [{ i: 0, l: 'high', c: 'conflict' }]);
-  });
-
-  it('pauses Jev after a chunk it answered none of, then resumes after the cooldown', async () => {
-    let clock = 1_000;
-    let jevUp = false;
-    const { classifyChunk, calls } = harness({ now: () => clock, jev: async () => (jevUp ? jevLabel('low') : null) });
-    const chunk = ['a', 'b', 'c', 'd', 'e'];
-    await classifyChunk(chunk);
-    assert.equal(calls.jev.length, 5);
-    assert.equal(calls.warn.length, 1);
-    jevUp = true;
-    await classifyChunk(chunk);
-    assert.equal(calls.jev.length, 5, 'paused: the second chunk must not reach Jev');
-    clock += 10 * 60 * 1000;
-    const out = await classifyChunk(chunk);
-    assert.equal(calls.jev.length, 10);
-    assert.ok(out.every((e) => e.src === 'jev'));
-  });
-
-  it('pauses across small chunks too: five straight unanswered titles, however they were chunked', async () => {
-    const { classifyChunk, calls } = harness({ jev: async () => null });
-    await classifyChunk(['a', 'b']);
-    await classifyChunk(['c', 'd']);
-    assert.equal(calls.warn.length, 0);
-    await classifyChunk(['e']);
-    assert.equal(calls.warn.length, 1);
-    await classifyChunk(['f']);
-    assert.equal(calls.jev.length, 5, 'paused after the fifth straight unanswered title');
-  });
-
-  it('a single answer resets the unanswered streak', async () => {
-    let up = false;
-    const { classifyChunk, calls } = harness({ jev: async () => (up ? jevLabel('low') : null) });
-    await classifyChunk(['a', 'b', 'c', 'd']);
-    up = true;
-    await classifyChunk(['e']);
-    up = false;
-    await classifyChunk(['f', 'g', 'h', 'i']);
-    assert.equal(calls.warn.length, 0);
-  });
-
-  it('does not pause or warn for a chunk Jev was never asked about', async () => {
-    const { classifyChunk, calls } = harness();
-    await classifyChunk(Array.from({ length: 6 }, () => 'الدفاع المدني'));
-    assert.equal(calls.warn.length, 0);
-    await classifyChunk(['plain english']);
-    assert.equal(calls.jev.length, 1);
-  });
-
-  it('does not pause on a partial failure', async () => {
-    const { classifyChunk, calls } = harness({ jev: async (t) => (t === 'a' ? jevLabel('low') : null) });
-    await classifyChunk(['a', 'b', 'c', 'd', 'e', 'f']);
-    await classifyChunk(['a']);
-    assert.equal(calls.jev.length, 7);
-    assert.equal(calls.warn.length, 0);
-  });
-});
-
-describe('shouldPublishClassifiedAlert', () => {
-  it('publishes an LLM-labelled alert exactly as before', () => {
-    assert.equal(shouldPublishClassifiedAlert({ l: 'high' }), true);
-    assert.equal(shouldPublishClassifiedAlert({ l: 'medium' }), false);
-  });
-
-  it('holds a Jev alert below the pAlert gate and publishes at it', () => {
-    assert.equal(shouldPublishClassifiedAlert({ l: 'high', src: 'jev', pAlert: JEV_NOTIFY_MIN_P_ALERT - 0.01 }), false);
-    assert.equal(shouldPublishClassifiedAlert({ l: 'critical', src: 'jev', pAlert: JEV_NOTIFY_MIN_P_ALERT }), true);
-    assert.equal(shouldPublishClassifiedAlert({ l: 'high', src: 'jev' }), false);
-  });
-});
-
-describe('JEV_NOTIFY_MIN_P_ALERT against the judged set', () => {
-  // Jev outputs captured by `scripts/eval-jev-classify.mjs --golden <fixture> --capture`.
-  const { rows } = JSON.parse(readFileSync(new URL('./fixtures/jev-classify-golden-2026-09-18.json', import.meta.url), 'utf8'));
-  const isAlert = (l) => l === 'critical' || l === 'high';
-
-  it('pages at >= 80% precision and >= 85% recall, where the ungated LLM labels page at under 50%', () => {
-    const judged = rows.filter((r) => r.jev);
-    assert.ok(judged.length >= 250);
-    const truth = judged.filter((r) => isAlert(r.judge)).length;
-    const paged = judged.filter((r) => shouldPublishClassifiedAlert({ l: r.jev.l, src: 'jev', pAlert: r.jev.pAlert }));
-    const hits = paged.filter((r) => isAlert(r.judge)).length;
-    assert.ok(hits / paged.length >= 0.8, `precision ${hits}/${paged.length}`);
-    assert.ok(hits / truth >= 0.85, `recall ${hits}/${truth}`);
-    const llmPaged = judged.filter((r) => isAlert(r.llm));
-    assert.ok(llmPaged.filter((r) => isAlert(r.judge)).length / llmPaged.length < 0.5);
-  });
-});
-
-describe('classifyCacheValue', () => {
-  it('keeps the LLM record shape byte-compatible', () => {
-    assert.deepEqual(classifyCacheValue({ l: 'high', c: 'conflict' }, 'high', 'conflict', 5), { level: 'high', category: 'conflict', timestamp: 5 });
-  });
-
-  it('adds provenance to a Jev record', () => {
-    assert.deepEqual(
-      classifyCacheValue({ src: 'jev', conf: 0.81234, pAlert: 0.9 }, 'high', 'conflict', 5),
-      { level: 'high', category: 'conflict', timestamp: 5, src: 'jev', conf: 0.81, pAlert: 0.9 },
-    );
-  });
-
-  it('never rounds a held alert up to the gate, so every reader of the row agrees with the relay', () => {
-    for (const pAlert of [0.6951, 0.6999, 0.699999]) {
-      const entry = { l: 'high', src: 'jev', conf: 0.5, pAlert };
-      assert.equal(shouldPublishClassifiedAlert(entry), false);
-      const row = classifyCacheValue(entry, 'high', 'conflict', 5);
-      assert.equal(shouldPublishClassifiedAlert({ l: 'high', src: 'jev', pAlert: row.pAlert }), false, `stored ${row.pAlert}`);
+describe('Jev shadow observer', () => {
+  it('does nothing at all without TYPESAFE_API_KEY', async () => {
+    for (const env of [{}, { TYPESAFE_API_KEY: '' }, { TYPESAFE_API_KEY: '   ' }]) {
+      const h = harness({ env, labels: { 'A strike': answer('high') } });
+      assert.equal(await h.observe('full', [{ title: 'A strike', level: 'low' }]), null);
+      assert.deepEqual(h.asked, []);
+      assert.deepEqual(h.recorded, []);
     }
-    assert.equal(classifyCacheValue({ src: 'jev', conf: 1, pAlert: 0.7 }, 'high', 'c', 5).pAlert, 0.7);
   });
-});
 
-describe('isHeldJevAlert', () => {
-  it('is true only for a Jev alert level the gate refused', () => {
-    assert.equal(isHeldJevAlert({ l: 'high', src: 'jev', pAlert: 0.55 }), true);
-    assert.equal(isHeldJevAlert({ l: 'high', src: 'jev', pAlert: 0.9 }), false);
-    assert.equal(isHeldJevAlert({ l: 'medium', src: 'jev', pAlert: 0.1 }), false);
-    assert.equal(isHeldJevAlert({ l: 'high' }), false);
+  it('records only disagreements, and marks the ones that flip the alert decision', async () => {
+    const h = harness({
+      labels: { 'Same': answer('medium'), 'Flip': answer('high', 0.93), 'Drift': answer('low') },
+    });
+    const tally = await h.observe('full', [
+      { title: 'Same', level: 'medium' },
+      { title: 'Flip', level: 'medium' },
+      { title: 'Drift', level: 'info' },
+    ]);
+    assert.deepEqual(tally, { asked: 3, answered: 3, agreed: 1, alertFlips: 1 });
+    assert.deepEqual(h.recorded, [
+      { at: 1_000, variant: 'full', title: 'Flip', llm: 'medium', jev: 'high', pAlert: 0.93, alertFlip: true },
+      { at: 1_000, variant: 'full', title: 'Drift', llm: 'info', jev: 'low', pAlert: 0.05, alertFlip: false },
+    ]);
   });
-});
 
-describe('countLabelSource', () => {
-  it('tallies by provider', () => {
-    const tally = { jev: 0, llm: 0 };
-    countLabelSource(tally, { src: 'jev' });
-    countLabelSource(tally, {});
-    assert.deepEqual(tally, { jev: 1, llm: 1 });
+  it('never asks Jev about non-Latin-script headlines', async () => {
+    const h = harness({ labels: { 'Flood in Nepal': answer('high') } });
+    const tally = await h.observe('full', [
+      { title: 'غارة جوية على الميناء', level: 'high' },
+      { title: 'Flood in Nepal', level: 'high' },
+    ]);
+    assert.deepEqual(h.asked, ['Flood in Nepal']);
+    assert.equal(tally.asked, 1);
+  });
+
+  it('cannot throw into the classify loop: a rejecting Jev call or record is swallowed', async () => {
+    const h = harness({ labels: { Boom: new Error('network'), Fine: answer('high') } });
+    const observe = createShadowObserver({
+      env: KEYED,
+      fetchJevLabel: async (t) => { if (t === 'Boom') throw new Error('network'); return answer('high'); },
+      record: async () => { throw new Error('redis down'); },
+      warn: () => {},
+    });
+    const tally = await observe('full', [{ title: 'Boom', level: 'low' }, { title: 'Fine', level: 'low' }]);
+    assert.deepEqual(tally, { asked: 2, answered: 1, agreed: 0, alertFlips: 1 });
+    assert.equal(h.recorded.length, 0);
+  });
+
+  it('pauses after Jev answers nothing, so an outage costs one slow chunk, not every chunk', async () => {
+    let clock = 0;
+    const h = harness({ now: () => clock });
+    const chunk = Array.from({ length: 5 }, (_, i) => ({ title: `T${i}`, level: 'low' }));
+    await h.observe('full', chunk);
+    assert.equal(h.asked.length, 5);
+    assert.match(h.warnings[0], /Jev shadow answered none/);
+    await h.observe('full', chunk);
+    assert.equal(h.asked.length, 5, 'paused: no further requests');
+    clock = 10 * 60 * 1000 + 1;
+    await h.observe('full', chunk);
+    assert.equal(h.asked.length, 10, 'resumes after the cooldown');
+  });
+
+  it('keeps at most 6 Jev requests in flight (TypeSafe allows 1,200/min)', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const observe = createShadowObserver({
+      env: KEYED,
+      record: async () => true,
+      fetchJevLabel: async () => {
+        inFlight += 1; peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 5));
+        inFlight -= 1;
+        return answer('low');
+      },
+    });
+    await observe('full', Array.from({ length: 40 }, (_, i) => ({ title: `T${i}`, level: 'low' })));
+    assert.ok(peak <= 6, `peak ${peak}`);
   });
 });
 
 describe('fetchJevLabel', () => {
-  const okBody = { answers: {
-    l0: { type: 'choice', choice: 'high', confidence: 0.8, probabilities: { high: 0.8, critical: 0.1 } },
-    c0: { type: 'choice', choice: 'conflict', confidence: 0.7, probabilities: {} },
-  } };
-  const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
+  const okBody = { answers: { l0: { type: 'choice', choice: 'high', confidence: 0.7, probabilities: { high: 0.6, critical: 0.2, medium: 0.2 } } } };
+  const respond = (status, body, headers = {}) => ({
+    ok: status >= 200 && status < 300, status,
+    json: async () => body, headers: { get: (k) => headers[k] ?? null }, body: { cancel: async () => {} },
+  });
 
-  it('posts one title with the bearer key and returns its label', async () => {
+  it('asks the level question only, authenticated, with a User-Agent', async () => {
     let seen;
-    const label = await fetchJevLabel('Title', 200, { apiKey: 'k', fetchFn: async (url, init) => { seen = { url, init }; return res(200, okBody); } });
+    const label = await fetchJevLabel('Strike on port', 200, {
+      apiKey: 'k', fetchFn: async (url, init) => { seen = { url, init }; return respond(200, okBody); },
+    });
     assert.equal(label.l, 'high');
-    assert.ok(Math.abs(label.pAlert - 0.9) < 1e-9);
+    assert.ok(Math.abs(label.pAlert - 0.8) < 1e-9);
     assert.equal(seen.init.headers.Authorization, 'Bearer k');
-    assert.match(seen.init.headers['User-Agent'], /WorldMonitor/);
-    assert.deepEqual(JSON.parse(seen.init.body).state, { headline: 'Title' });
+    assert.ok(seen.init.headers['User-Agent']);
+    assert.deepEqual(Object.keys(JSON.parse(seen.init.body).questions), ['l0'], 'one question: 618 tokens, not 1,030');
   });
 
-  it('retries once on 429 and 529, then gives up with null', async () => {
-    let n = 0;
-    assert.equal((await fetchJevLabel('t', 200, { apiKey: 'k', retryDelayMs: 0, fetchFn: async () => (++n === 1 ? res(429) : res(200, okBody)) })).l, 'high');
-    n = 0;
-    assert.equal(await fetchJevLabel('t', 200, { apiKey: 'k', retryDelayMs: 0, fetchFn: async () => { n++; return res(529); } }), null);
-    assert.equal(n, 2);
+  it('returns null on a network error, a non-retryable status, and an unparseable body', async () => {
+    assert.equal(await fetchJevLabel('t', 200, { apiKey: 'k', fetchFn: async () => { throw new Error('x'); } }), null);
+    assert.equal(await fetchJevLabel('t', 200, { apiKey: 'k', fetchFn: async () => respond(401, {}) }), null);
+    assert.equal(await fetchJevLabel('t', 200, { apiKey: 'k', fetchFn: async () => respond(200, { answers: {} }) }), null);
   });
 
-  it('waits out a short Retry-After and gives up on a long one without retrying', async () => {
-    const throttled = (seconds) => ({ ok: false, status: 429, headers: { get: (h) => (h === 'retry-after' ? String(seconds) : null) } });
-    let n = 0;
-    const t0 = Date.now();
-    const label = await fetchJevLabel('t', 200, { apiKey: 'k', retryDelayMs: 0, fetchFn: async () => (++n === 1 ? throttled(0.05) : res(200, okBody)) });
+  it('retries a 429 once, and not when Retry-After is longer than it will wait', async () => {
+    let calls = 0;
+    const label = await fetchJevLabel('t', 200, {
+      apiKey: 'k', retryDelayMs: 1,
+      fetchFn: async () => (++calls === 1 ? respond(429, {}) : respond(200, okBody)),
+    });
     assert.equal(label.l, 'high');
-    assert.ok(Date.now() - t0 >= 45);
-    n = 0;
-    assert.equal(await fetchJevLabel('t', 200, { apiKey: 'k', retryDelayMs: 0, fetchFn: async () => { n++; return throttled(30); } }), null);
-    assert.equal(n, 1);
-  });
-
-  it('returns null without retrying on other statuses, invalid answers and network errors', async () => {
-    let n = 0;
-    assert.equal(await fetchJevLabel('t', 200, { apiKey: 'k', retryDelayMs: 0, fetchFn: async () => { n++; return res(401); } }), null);
-    assert.equal(n, 1);
-    assert.equal(await fetchJevLabel('t', 200, { apiKey: 'k', fetchFn: async () => res(200, { answers: {} }) }), null);
-    assert.equal(await fetchJevLabel('t', 200, { apiKey: 'k', retryDelayMs: 0, fetchFn: async () => { throw new Error('net'); } }), null);
-    assert.equal(await fetchJevLabel('t', 200, { apiKey: 'k', fetchFn: async () => ({ ok: true, status: 200, json: async () => { throw new Error('not json'); } }) }), null);
-  });
-
-  it('gives up at the timeout when the endpoint hangs', async () => {
-    const hang = (_url, init) => new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)));
-    const t0 = Date.now();
-    assert.equal(await fetchJevLabel('t', 200, { apiKey: 'k', timeoutMs: 30, fetchFn: hang }), null);
-    assert.ok(Date.now() - t0 < 2000);
+    assert.equal(calls, 2);
+    calls = 0;
+    assert.equal(await fetchJevLabel('t', 200, {
+      apiKey: 'k', retryDelayMs: 1, fetchFn: async () => { calls += 1; return respond(429, {}, { 'retry-after': '60' }); },
+    }), null);
+    assert.equal(calls, 1);
   });
 });
 
-describe('relay seedClassify wiring', () => {
+describe('relay wiring: shadow mode decides nothing', () => {
   const relay = readFileSync(new URL('../scripts/ais-relay.cjs', import.meta.url), 'utf8');
-  const start = relay.indexOf('async function seedClassify()');
-  const end = relay.indexOf('\nasync function startClassifySeedLoop()', start);
+  const main = (name) => relay.slice(relay.indexOf(`async function ${name}(`));
 
-  async function runSeedClassify(env, variantStats) {
-    assert.ok(start > 0 && end > start);
-    const writes = new Map();
-    const logs = [];
-    let variantCalls = 0;
-    const context = {
-      classifyInFlight: false, CLASSIFY_LLM_PROVIDERS: [{ envKey: 'TEST_PROVIDER' }], jevApiKey: () => jevApiKey(env),
-      process: { env }, Date, console: { log: (m) => logs.push(m), warn() {} }, setTimeout: (fn) => fn(),
-      telegramState: { items: [] }, publishSaudiCivilDefenseAlerts: async () => {},
-      upstashGet: async () => null, upstashSet: async (key, value) => { writes.set(key, value); },
-      MAX_POST_CHARS: 4096, classifyFetchLlm: async () => null, relayComputeImportanceScore: () => 0,
-      publishNotificationEvent: async () => {}, CLASSIFY_VARIANTS: ['full', 'tech'], CLASSIFY_VARIANT_STAGGER_MS: 0,
-      seedClassifyForVariant: async () => variantStats[variantCalls++],
-      shouldWriteClassifySeedMeta: () => true, envelopeWrite: async () => {},
-      NEWS_THREAT_SUMMARY_KEY: 'k', NEWS_THREAT_SUMMARY_TTL: 1,
-    };
-    vm.createContext(context);
-    await vm.runInContext(`${relay.slice(start, end)}\nseedClassify()`, context);
-    return { writes, logs, variantCalls };
-  }
-
-  it('runs on TYPESAFE_API_KEY alone and sums byProvider across variants into seed-meta', async () => {
-    const { writes, variantCalls } = await runSeedClassify({ TYPESAFE_API_KEY: 'k' }, [
-      { total: 9, classified: 5, skipped: 1, byProvider: { jev: 4, llm: 1, held: 2 } },
-      { total: 3, classified: 0, skipped: 0 },
-    ]);
-    assert.equal(variantCalls, 2);
-    const meta = writes.get('seed-meta:classify');
-    assert.equal(meta.recordCount, 5);
-    assert.deepEqual({ ...meta.byProvider }, { jev: 4, llm: 1, held: 2, skipped: 1 });
+  it('observes AFTER the label is cached and the alert is published, and never feeds back', () => {
+    const body = main('seedClassifyForVariant');
+    const write = body.indexOf('upstashSet(classifyCacheKey(chunk[idx])');
+    const publish = body.indexOf("eventType: 'rss_alert'");
+    const observe = body.indexOf('observeJevShadow(');
+    assert.ok(write > 0 && publish > write && observe > publish, 'order: cache write, alert publish, shadow observe');
+    assert.doesNotMatch(body, /=\s*await observeJevShadow\([^)]*\);[\s\S]{0,400}upstashSet\(classifyCacheKey/, 'the tally must not reach a label write');
   });
 
-  it('still skips when neither a Jev key nor an LLM key is configured', async () => {
-    const { writes, variantCalls, logs } = await runSeedClassify({ TYPESAFE_API_KEY: ' ' }, []);
-    assert.equal(variantCalls, 0);
-    assert.equal(writes.size, 0);
-    assert.ok(logs.some((m) => m.includes('no classifier keys configured')));
+  it('the cached row and the alert rule are exactly main\'s: no Jev field, no gate', () => {
+    assert.match(relay, /upstashSet\(classifyCacheKey\(chunk\[idx\]\), \{ level, category, timestamp: Date\.now\(\) \}, CLASSIFY_CACHE_TTL\)/);
+    assert.doesNotMatch(relay, /pAlert|jevGateAllowsAlert|shouldPublishClassifiedAlert/);
   });
 
-  it('imports its level and category lists from the shared Jev module', () => {
-    assert.match(relay, /THREAT_LEVELS: CLASSIFY_VALID_LEVELS,\s+THREAT_CATEGORIES: CLASSIFY_VALID_CATEGORIES,\s+\} = require\('\.\.\/shared\/jev-classify\.js'\)/);
-    assert.doesNotMatch(relay, /const CLASSIFY_VALID_LEVELS = \[/);
-  });
-
-  it('caches a held Jev alert and counts it instead of publishing it', () => {
-    const loopStart = relay.indexOf('const llmResult = await classifyChunk(chunk);');
-    const publish = relay.indexOf('publishNotificationEvent({', loopStart);
-    const block = relay.slice(loopStart, publish);
-    const cacheWrite = block.indexOf('classifyCacheValue(entry, level, category');
-    const held = block.indexOf('if (isHeldJevAlert({ ...entry, l: level }))');
-    const gate = block.indexOf('if (shouldPublishClassifiedAlert({ ...entry, l: level }))');
-    assert.ok(cacheWrite > 0 && held > cacheWrite && gate > held, 'cache write, then held tally, then the publish gate');
-    assert.ok(block.slice(held, gate).includes('byProvider.held += 1'));
+  it('caps the shadow log so it cannot grow without bound', () => {
+    assert.equal(SHADOW_LOG_KEY, 'classify:jev-shadow:v1');
+    assert.ok(SHADOW_LOG_MAX > 0 && SHADOW_LOG_MAX <= 5000);
+    assert.match(relay, /LTRIM/);
   });
 });

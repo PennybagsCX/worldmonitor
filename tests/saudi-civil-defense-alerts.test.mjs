@@ -154,7 +154,7 @@ describe('Saudi Civil Defense notification producer', () => {
     const end = relay.indexOf('\nasync function startClassifySeedLoop()', start);
     assert.ok(start > 0 && end > start);
     const context = {
-      classifyInFlight: false, CLASSIFY_LLM_PROVIDERS: [{ envKey: 'TEST_PROVIDER' }], jevApiKey: () => '',
+      classifyInFlight: false, CLASSIFY_LLM_PROVIDERS: [{ envKey: 'TEST_PROVIDER' }],
       process: { env: { TEST_PROVIDER: 'fixture' } }, Date: { now: () => NOW },
       console: { log() {}, warn() {} }, telegramState: { items: [post()] },
       publishSaudiCivilDefenseAlerts, upstashGet: h.deps.readCache, upstashSet: h.deps.writeCache,

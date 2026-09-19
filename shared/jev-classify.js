@@ -11,24 +11,6 @@
 export const JEV_MODEL = 'jev-1.13.0';
 export const JEV_ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
 
-// P(critical) + P(high) a Jev-labelled alert needs before it alerts anyone:
-// 83% precision at 89% recall on the judged set
-// (tests/fixtures/jev-classify-golden-2026-09-18.json), against 46% for the
-// ungated LLM labels. In-sample on n=27 alert-level titles (26 high, 1
-// critical): it trades alert recall 26/27 -> 24/27 for that precision.
-// `scripts/eval-jev-classify.mjs --golden <fixture> --replay` prints the sweep.
-export const JEV_NOTIFY_MIN_P_ALERT = 0.7;
-
-/**
- * Whether a critical/high label may raise an alert. One rule for the relay's
- * rss_alert publish and for digest readers of the cached row: an LLM label
- * (no `src`) always may; a Jev label needs a numeric pAlert at the gate.
- */
-export function jevGateAllowsAlert({ src, pAlert }) {
-  if (src !== 'jev') return true;
-  return typeof pAlert === 'number' && pAlert >= JEV_NOTIFY_MIN_P_ALERT;
-}
-
 export const THREAT_LEVELS = ['critical', 'high', 'medium', 'low', 'info'];
 export const THREAT_CATEGORIES = [
   'conflict', 'protest', 'disaster', 'diplomatic', 'economic',
@@ -100,14 +82,15 @@ const categoryQuestion = (subject) => ({
  * One request for `titles`. A single title gets `{headline}` as state. Several
  * share one state keyed h0..hN, with a level and a category question each.
  */
-export function buildJevRequest(titles, { maxTextChars = 200, model = JEV_MODEL } = {}) {
+export function buildJevRequest(titles, { maxTextChars = 200, model = JEV_MODEL, levelOnly = false } = {}) {
   const clean = titles.map((t) => sanitizeHeadline(t, maxTextChars));
   if (clean.length === 1) {
-    return {
-      model,
-      state: { headline: clean[0] },
-      questions: { l0: levelQuestion('`headline`'), c0: categoryQuestion('`headline`') },
-    };
+    // levelOnly: the level answer is the same with or without the category
+    // question beside it (median |dP| 0.01 over 40 titles) at 618 input tokens
+    // instead of 1,030.
+    const questions = { l0: levelQuestion('`headline`') };
+    if (!levelOnly) questions.c0 = categoryQuestion('`headline`');
+    return { model, state: { headline: clean[0] }, questions };
   }
   const headlines = {};
   const questions = {};
@@ -126,15 +109,18 @@ function readChoice(answer, valid) {
   return { choice: answer.choice, conf, probabilities: answer.probabilities ?? {} };
 }
 
-/** Labels for every index whose two answers are both valid. Others are absent. */
-export function parseJevAnswers(body, count) {
+/**
+ * Labels for every index whose answers are valid. Others are absent. With
+ * `levelOnly` no category was asked, so none is required and `c` is omitted.
+ */
+export function parseJevAnswers(body, count, { levelOnly = false } = {}) {
   const answers = body?.answers;
   if (!answers || typeof answers !== 'object') return [];
   const labels = [];
   for (let i = 0; i < count; i++) {
     const level = readChoice(answers[`l${i}`], THREAT_LEVELS);
-    const category = readChoice(answers[`c${i}`], THREAT_CATEGORIES);
-    if (!level || !category) continue;
+    const category = levelOnly ? null : readChoice(answers[`c${i}`], THREAT_CATEGORIES);
+    if (!level || (!levelOnly && !category)) continue;
     const p = level.probabilities;
     // A level without its own probability is a response shape this parser does
     // not understand. Dropping it sends the title to the fallback, where reading
@@ -143,7 +129,7 @@ export function parseJevAnswers(body, count) {
     labels.push({
       i,
       l: level.choice,
-      c: category.choice,
+      ...(category ? { c: category.choice } : {}),
       levelConf: level.conf,
       pAlert: [p.critical, p.high].reduce((sum, v) => sum + (typeof v === 'number' && Number.isFinite(v) ? v : 0), 0),
     });

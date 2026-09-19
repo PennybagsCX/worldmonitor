@@ -13,6 +13,11 @@
  *   node --env-file=.env.local scripts/eval-jev-classify.mjs --golden tests/fixtures/jev-classify-golden-2026-09-18.json --shapes single
  * Add --capture to write that run's Jev outputs back into the golden file, so the
  * alert-gate sweep stays checkable without a paid call (--replay scores them offline).
+ *
+ * --shadow-report reads the relay's shadow log (classify:jev-shadow:v1: every headline
+ * where Jev's level disagreed with the LLM's cached label) and prints the alert flips
+ * first. Read-only, needs only the Upstash variables:
+ *   node --env-file=.env.local scripts/eval-jev-classify.mjs --shadow-report [--limit 200]
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -37,7 +42,7 @@ const SINGLE_CONCURRENCY = 25;
 const USD_PER_M_INPUT = 0.042;
 
 const { TYPESAFE_API_KEY, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN } = process.env;
-const required = args.replay ? {} : args.golden ? { TYPESAFE_API_KEY } : { TYPESAFE_API_KEY, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN };
+const required = args.replay ? {} : args['shadow-report'] ? { UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN } : args.golden ? { TYPESAFE_API_KEY } : { TYPESAFE_API_KEY, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN };
 for (const [k, v] of Object.entries(required)) {
   if (!v) { console.error(`missing ${k}`); process.exit(2); }
 }
@@ -56,6 +61,19 @@ async function redis(command) {
 const parseMaybe = (v) => { if (typeof v !== 'string') return v; try { return JSON.parse(v); } catch { return null; } };
 const cacheKey = (title) =>
   `classify:sebuf:v6:${crypto.createHash('sha256').update(title.toLowerCase()).digest('hex').slice(0, 16)}`;
+
+async function shadowReport() {
+  const rows = (await redis(['LRANGE', 'classify:jev-shadow:v1', 0, LIMIT - 1]) ?? []).map(parseMaybe).filter(Boolean);
+  if (rows.length === 0) { console.log('shadow log is empty (is TYPESAFE_API_KEY set on the relay?)'); return; }
+  const flips = rows.filter((r) => r.alertFlip);
+  const span = `${new Date(rows.at(-1).at).toISOString()} .. ${new Date(rows[0].at).toISOString()}`;
+  console.log(`${rows.length} disagreements, ${flips.length} alert flips, ${span}`);
+  console.log(`  Jev alerts, LLM does not: ${flips.filter((r) => r.jev === 'critical' || r.jev === 'high').length}`);
+  console.log(`  LLM alerts, Jev does not: ${flips.filter((r) => r.llm === 'critical' || r.llm === 'high').length}`);
+  for (const r of [...flips, ...rows.filter((x) => !x.alertFlip)]) {
+    console.log(`${r.alertFlip ? 'FLIP' : '    '} llm=${r.llm.padEnd(8)} jev=${r.jev.padEnd(8)} p=${String(r.pAlert).padEnd(4)} [${r.variant}] ${r.title}`);
+  }
+}
 
 async function loadLabelledTitles() {
   const titles = new Map();
@@ -163,7 +181,8 @@ function score(rows, out, calls, wallMs) {
     };
   });
 
-  // The relay's paging gate (JEV_NOTIFY_MIN_P_ALERT): publish a Jev alert only at pAlert >= tau.
+  // If Jev's label decided alerts: publish a Jev alert only at pAlert >= tau. It does not
+  // today (shadow mode); this sweep is how a threshold would be chosen.
   const alertGateSweep = [0, 0.5, 0.6, 0.7, 0.8, 0.9].map((tau) => {
     const published = answered.filter((r) => isAlert(r.jev.l) && r.jev.pAlert >= tau);
     const truePos = published.filter((r) => isAlert(r.llm.l)).length;
@@ -205,6 +224,8 @@ function loadGolden(file) {
   // The reference label is the judge's. Categories were not judged, so category agreement is not scored.
   return { digestTitles: golden.length, labelled: golden.map((g) => ({ title: g.title, variant: 'golden', llm: { l: g.judge, c: null } })) };
 }
+
+if (args['shadow-report']) { await shadowReport(); process.exit(0); }
 
 const { digestTitles, labelled } = args.golden ? loadGolden(args.golden) : await loadLabelledTitles();
 const rows = labelled.slice(0, LIMIT);

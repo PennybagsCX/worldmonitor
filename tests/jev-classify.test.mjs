@@ -41,6 +41,16 @@ describe('buildJevRequest', () => {
 });
 
 describe('parseJevAnswers', () => {
+  it('levelOnly asks and requires the level question alone', () => {
+    const req = buildJevRequest(['Strike on port'], { levelOnly: true });
+    assert.deepEqual(Object.keys(req.questions), ['l0']);
+    const body = { answers: { l0: { type: 'choice', choice: 'high', confidence: 0.7, probabilities: { high: 0.7, medium: 0.3 } } } };
+    assert.deepEqual(parseJevAnswers(body, 1), [], 'without levelOnly a missing category is no label');
+    const [label] = parseJevAnswers(body, 1, { levelOnly: true });
+    assert.equal(label.l, 'high');
+    assert.equal('c' in label, false);
+  });
+
   it('returns level, category, level confidence and pAlert per index', () => {
     const labels = parseJevAnswers({
       answers: {

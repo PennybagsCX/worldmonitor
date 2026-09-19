@@ -9,7 +9,6 @@ import { cachedFetchJson } from '../../../_shared/redis';
 import { markNoCacheResponse } from '../../../_shared/response-headers';
 import { UPSTREAM_TIMEOUT_MS, buildClassifyCacheKey } from './_shared';
 import { callLlm } from '../../../_shared/llm';
-import { jevGateAllowsAlert } from '../../../../shared/jev-classify.js';
 
 // ========================================================================
 // Constants
@@ -39,19 +38,6 @@ function mapLevelToSeverity(level: string): SeverityLevel {
   if (level === 'critical' || level === 'high') return 'SEVERITY_LEVEL_HIGH';
   if (level === 'medium') return 'SEVERITY_LEVEL_MEDIUM';
   return 'SEVERITY_LEVEL_LOW';
-}
-
-type ClassifyCacheRow = { level: string; category: string; timestamp: number; src?: unknown; pAlert?: unknown };
-
-/**
- * The relay's classify seed writes this same cache key and, when Jev labelled
- * the title, holds a critical/high below its pAlert gate. The level is this
- * RPC's only channel to the client (threat-classifier.ts rebuilds isAlert from
- * it), so a held row leaves here as medium, not as the alert the gate refused.
- */
-export function levelServedToCallers(row: ClassifyCacheRow): string {
-  const isAlertLevel = row.level === 'critical' || row.level === 'high';
-  return isAlertLevel && !jevGateAllowsAlert(row) ? 'medium' : row.level;
 }
 
 // ========================================================================
@@ -103,9 +89,9 @@ Classify by real-world event severity, not headline sentiment.
 
 Return: {"level":"...","category":"..."}`;
 
-  let cached: ClassifyCacheRow | null = null;
+  let cached: { level: string; category: string; timestamp: number } | null = null;
   try {
-    cached = await cachedFetchJson<ClassifyCacheRow>(
+    cached = await cachedFetchJson<{ level: string; category: string; timestamp: number }>(
       cacheKey,
       CLASSIFY_CACHE_TTL,
       async () => {
@@ -180,12 +166,11 @@ Return: {"level":"...","category":"..."}`;
 
   if (!cached?.level || !cached?.category) { markNoCacheResponse(ctx.request); return { classification: undefined }; }
 
-  const level = levelServedToCallers(cached);
   return {
     classification: {
       category: cached.category,
-      subcategory: level,
-      severity: mapLevelToSeverity(level),
+      subcategory: cached.level,
+      severity: mapLevelToSeverity(cached.level),
       confidence: 0.9,
       analysis: '',
       entities: [],
