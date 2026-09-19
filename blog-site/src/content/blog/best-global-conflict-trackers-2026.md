@@ -10,7 +10,7 @@ pubDate: "2026-09-20"
 
 The best global conflict tracker depends on the question. Use **World Monitor** to view conflict reports alongside aviation, shipping, and market signals; **CFR** for policy context; **ACLED** for structured political violence and protest data; and **UCDP** for conflict research. A live map and a research dataset serve different needs.
 
-This guide compares ten tools and sources, including specialist resources that complement a tracker. It is published by World Monitor, which is included in the comparison. The order groups use cases; it is not an independent performance ranking or a measured speed benchmark.
+This guide compares monitoring resources, including specialist sources that complement a tracker. It is published by World Monitor, which is included in the comparison. The order groups use cases; it is not an independent performance ranking or a measured speed benchmark.
 
 ## How we compare conflict monitoring tools
 
