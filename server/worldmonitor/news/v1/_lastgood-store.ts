@@ -24,6 +24,7 @@ import {
   attemptMetaKey,
   isAcceptableDigest,
   isEligibleScope,
+  isStaleReason,
   lastGoodKey,
   nextPeak,
   parseAcceptedSnapshot,
@@ -202,6 +203,60 @@ export function publishFailedAttempt(
   return attempt;
 }
 
+/**
+ * The acceptance gate kept the incumbent. This is not a failed build: the
+ * candidate was valid, just narrower. Record that so a later sentinel hit
+ * does not recover an unrelated empty-rebuild / build-error from up to 25h
+ * ago (#8361). The Lua/sidecar path has already parked the 120s sentinel;
+ * this writes only the attempt identity.
+ */
+export function publishGateHeldAttempt(
+  variant: string,
+  lang: string,
+  digestCacheKey?: string,
+  at = new Date().toISOString(),
+): FailedDigestAttempt {
+  const attempt = Object.freeze({ at, reason: 'gate-held' as const });
+  const now = Date.now();
+  recentFailedAttempts.set(scopeKey(variant, lang), {
+    attempt,
+    expiresAt: now + DIGEST_REJECTION_TTL_S * 1000,
+  });
+  if (digestCacheKey) {
+    failureCooldowns.set(digestCacheKey, now + DIGEST_REJECTION_TTL_S * 1000);
+  }
+  boundLocalRecoveryMaps(now);
+
+  if (!isEligibleScope(variant, lang)) return attempt;
+  const ts = Date.parse(attempt.at);
+  const stored = { ts: Number.isFinite(ts) ? ts : now, outcome: attempt.reason };
+  const persist = (async () => {
+    try {
+      if (process.env.LOCAL_API_MODE === 'tauri-sidecar') {
+        const written = await setCachedJson(attemptMetaKey(variant, lang), stored, ATTEMPT_META_TTL_S);
+        if (!written) {
+          console.warn(`[digest-attempt] gate-held publish unavailable variant=${variant} lang=${lang}`);
+        }
+        return;
+      }
+      const results = await runRedisTransaction([
+        ['SET', attemptMetaKey(variant, lang), JSON.stringify(stored), 'EX', String(ATTEMPT_META_TTL_S)],
+      ]);
+      if (!transactionSucceeded(results, 1)) {
+        console.warn(`[digest-attempt] gate-held publish unavailable variant=${variant} lang=${lang}`);
+      }
+    } catch (err) {
+      console.warn('[digest-attempt] gate-held publish failed:', err);
+      captureSilentError(err, {
+        tags: { surface: 'news', component: 'digest-lastgood', stage: 'gate-held-publish', variant, lang },
+        fingerprint: ['digest-lastgood', 'gate-held-publish-failed'],
+      });
+    }
+  })();
+  scheduleBackground(persist);
+  return attempt;
+}
+
 export async function recoverFailedAttempt(
   variant: string,
   lang: string,
@@ -223,9 +278,7 @@ export async function recoverFailedAttempt(
       if (read.status === 'hit' && read.value && typeof read.value === 'object') {
         const value = read.value as { ts?: unknown; outcome?: unknown };
         const ts = typeof value.ts === 'number' && Number.isFinite(value.ts) ? value.ts : null;
-        const reason = value.outcome === 'build-error' || value.outcome === 'empty-rebuild'
-          ? value.outcome
-          : null;
+        const reason = isStaleReason(value.outcome) ? value.outcome : null;
         if (ts !== null && reason) {
           const recovered = Object.freeze({ at: new Date(ts).toISOString(), reason });
           recentFailedAttempts.set(key, {
@@ -370,6 +423,7 @@ export async function publishAcceptedSnapshot(
             return 'unavailable';
           }
         }
+        publishGateHeldAttempt(variant, lang, canonicalDigestKey);
         reportGateRejection(variant, lang);
         return 'rejected';
       }
@@ -425,6 +479,7 @@ export async function publishAcceptedSnapshot(
       console.warn(`[digest-publication] publish unavailable variant=${variant} lang=${lang}`);
       return 'unavailable';
     } else if (outcome.result === 0) {
+      publishGateHeldAttempt(variant, lang, canonicalDigestKey);
       reportGateRejection(variant, lang);
       return 'rejected';
     } else if (outcome.result === -1) {
@@ -452,4 +507,5 @@ export const __testing__ = {
   gateRejectionReports,
   deferDigestAttempt,
   measureServableRichness,
+  publishGateHeldAttempt,
 };

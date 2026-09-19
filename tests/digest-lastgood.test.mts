@@ -16,6 +16,7 @@ import {
   filterRevokedUrls,
   isAcceptableDigest,
   isEligibleScope,
+  isStaleReason,
   lastGoodKey,
   parseAcceptedMeta,
   shouldReplaceAccepted,
@@ -46,6 +47,14 @@ describe('durable last-good policy (#7084)', () => {
     assert.equal(LASTGOOD_TTL_S, 6 * 60 * 60);
     assert.equal(LASTGOOD_MAX_AGE_MS, 6 * 60 * 60 * 1000);
     assert.ok(ATTEMPT_META_TTL_S > LASTGOOD_TTL_S, 'attempt metadata outlives the snapshot');
+  });
+
+  it('names gate-held as its own stale reason, distinct from a failed rebuild', () => {
+    assert.equal(isStaleReason('empty-rebuild'), true);
+    assert.equal(isStaleReason('build-error'), true);
+    assert.equal(isStaleReason('gate-held'), true);
+    assert.equal(isStaleReason(''), false);
+    assert.equal(isStaleReason('held-incumbent'), false);
   });
 
   it('accepts only structurally valid digests with real content', () => {
@@ -554,7 +563,16 @@ describe('durable last-good wiring (#7084)', () => {
       stub.writes.length = 0;
 
       await mod.__testing__.publishAcceptedSnapshot('full', 'en', narrow, canonicalKey);
-      assert.equal(stub.writes.length, 0, 'a narrower candidate must not replace either sidecar key');
+      assert.equal(
+        stub.writes.filter((write) => write.key === lastGoodKey('full', 'en') || write.key === canonicalKey).length,
+        0,
+        'a narrower candidate must not replace either sidecar key',
+      );
+      const attemptWrite = stub.writes.find((write) => write.key === attemptMetaKey('full', 'en'));
+      assert.ok(attemptWrite, 'the rejection must record why the incumbent was held');
+      assert.equal((attemptWrite.value as { outcome: string }).outcome, 'gate-held');
+      assert.equal(attemptWrite.ttl, ATTEMPT_META_TTL_S);
+      stub.writes.length = 0;
 
       await mod.__testing__.publishAcceptedSnapshot('full', 'en', valid, canonicalKey);
       assert.deepEqual(stub.writes.map((write) => write.key), [lastGoodKey('full', 'en'), canonicalKey]);
@@ -604,7 +622,12 @@ describe('durable last-good wiring (#7084)', () => {
     });
     try {
       await mod.__testing__.publishAcceptedSnapshot('full', 'en', narrow, canonicalKey);
-      assert.deepEqual(stub.writes, [{ key: canonicalKey, value: '__WM_NEG__', ttl: 120 }]);
+      assert.equal(stub.writes[0]?.key, canonicalKey);
+      assert.equal(stub.writes[0]?.value, '__WM_NEG__');
+      assert.equal(stub.writes[0]?.ttl, 120);
+      assert.equal(stub.writes[1]?.key, attemptMetaKey('full', 'en'));
+      assert.equal((stub.writes[1]?.value as { outcome: string }).outcome, 'gate-held');
+      assert.equal(stub.writes[1]?.ttl, ATTEMPT_META_TTL_S);
     } finally {
       if (originalMode === undefined) delete process.env.LOCAL_API_MODE;
       else process.env.LOCAL_API_MODE = originalMode;
@@ -1173,6 +1196,57 @@ describe('durable last-good wiring (#7084)', () => {
     assert.equal(out.coverage.state, 'unavailable');
     assert.equal(out.coverage.attemptedAt, new Date(failedAtMs).toISOString());
     assert.equal(out.coverage.staleReason, 'build-error');
+  });
+
+  it('a gate rejection writes a gate-held attempt instead of leaving a leftover failure', async () => {
+    // Production 2026-09-19: the gate wrote only the 120s sentinel. The next
+    // request recovered news:digest:attempt:v1:full:en, a build-error from
+    // 122 minutes earlier, and reported that as why the digest was stale.
+    reset();
+    stub.pipeline = async () => [{ result: 0 }];
+    const before = Date.now();
+    await mod.__testing__.publishAcceptedSnapshot(
+      'full', 'en', body(['https://a/1'], COVERAGE), 'news:digest:v1:full:en',
+    );
+    const after = Date.now();
+    assert.equal(stub.transactionCalls.length, 1, 'gate-held identity is one SET, not a sentinel rewrite');
+    const [attemptSet] = stub.transactionCalls[0] as string[][];
+    assert.equal(attemptSet[0], 'SET');
+    assert.equal(attemptSet[1], attemptMetaKey('full', 'en'));
+    const stored = JSON.parse(attemptSet[2]) as { ts: number; outcome: string };
+    assert.equal(stored.outcome, 'gate-held');
+    assert.ok(stored.ts >= before && stored.ts <= after, 'attemptedAt is the rejection, not a prior failure');
+    assert.equal(attemptSet[4], String(ATTEMPT_META_TTL_S));
+  });
+
+  it('a fully-revoked candidate does not record a gate-held attempt', async () => {
+    reset();
+    stub.pipeline = async () => [{ result: -1 }];
+    await mod.__testing__.publishAcceptedSnapshot(
+      'full', 'en', body(['https://a/1'], COVERAGE), 'news:digest:v1:full:en',
+    );
+    assert.equal(stub.transactionCalls.length, 0, 'an operator revocation is not a held incumbent');
+  });
+
+  it('a sentinel replay after a gate hold reports gate-held, not a leftover build-error', async () => {
+    reset();
+    const heldAtMs = NOW - 5_000;
+    stub.reads.set(attemptMetaKey('full', 'en'), {
+      status: 'hit',
+      value: { ts: heldAtMs, outcome: 'gate-held' },
+    });
+    stub.reads.set(lastGoodKey('full', 'en'), {
+      status: 'hit',
+      value: {
+        acceptedAt: Date.now() - 60_000, categoryCount: 1, itemCount: 1,
+        data: body(['https://a/1'], COVERAGE),
+      },
+    });
+    stub.fetchMeta = { data: null, source: 'cache', leader: false };
+    const out = await mod.listFeedDigest(ctx(), { variant: 'full', lang: 'en' });
+    assert.equal(out.coverage.state, 'stale');
+    assert.equal(out.coverage.staleReason, 'gate-held', 'the gate hold must not inherit a leftover failure');
+    assert.equal(out.coverage.attemptedAt, new Date(heldAtMs).toISOString());
   });
 
   it('a hanging telemetry write cannot delay the absolute response fallback', async () => {
