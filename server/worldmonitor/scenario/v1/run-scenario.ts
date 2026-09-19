@@ -7,7 +7,6 @@ import { ApiError, ValidationError } from '../../../../src/generated/server/worl
 
 import {
   requirePremiumRpcAccess,
-  resolvePremiumCallerIdentity,
 } from '../../../_shared/premium-check';
 import { runRedisPipeline } from '../../../_shared/redis';
 import { setResponseHeader, setSuccessStatusOverride } from '../../../_shared/response-headers';
@@ -26,7 +25,7 @@ export async function runScenario(
   ctx: ServerContext,
   req: RunScenarioRequest,
 ): Promise<RunScenarioResponse> {
-  await requirePremiumRpcAccess(ctx.request, ApiError, 'PRO subscription required');
+  const identity = await requirePremiumRpcAccess(ctx.request, ApiError, 'PRO subscription required');
 
   const scenarioId = (req.scenarioId ?? '').trim();
   if (!scenarioId) {
@@ -57,7 +56,6 @@ export async function runScenario(
     throw new ApiError(429, 'Scenario queue is at capacity, please try again later', '');
   }
 
-  const identity = await resolvePremiumCallerIdentity(ctx.request);
   const owner = await scenarioOwnerToken(identity, ctx.request);
   if (!owner) {
     throw new ApiError(403, 'PRO subscription required', '');

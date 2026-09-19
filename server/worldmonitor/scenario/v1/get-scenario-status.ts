@@ -8,7 +8,6 @@ import { ApiError, ValidationError } from '../../../../src/generated/server/worl
 
 import {
   requirePremiumRpcAccess,
-  resolvePremiumCallerIdentity,
 } from '../../../_shared/premium-check';
 import { getRawJson } from '../../../_shared/redis';
 import {
@@ -128,14 +127,13 @@ export async function getScenarioStatus(
   ctx: ServerContext,
   req: GetScenarioStatusRequest,
 ): Promise<GetScenarioStatusResponse> {
-  await requirePremiumRpcAccess(ctx.request, ApiError, 'PRO subscription required');
+  const identity = await requirePremiumRpcAccess(ctx.request, ApiError, 'PRO subscription required');
 
   const jobId = req.jobId ?? '';
   if (!JOB_ID_RE.test(jobId)) {
     throw new ValidationError([{ field: 'jobId', description: 'Invalid or missing jobId' }]);
   }
 
-  const identity = await resolvePremiumCallerIdentity(ctx.request);
   const caller = await scenarioOwnerToken(identity, ctx.request);
   if (!caller) {
     throw new ApiError(403, 'PRO subscription required', '');
