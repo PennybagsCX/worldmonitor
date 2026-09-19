@@ -25,6 +25,7 @@ import {
   isAcceptableDigest,
   isEligibleScope,
   lastGoodKey,
+  nextPeak,
   parseAcceptedSnapshot,
   shouldReplaceAccepted,
   type AcceptedSnapshot,
@@ -58,6 +59,8 @@ export interface LastGoodRead<T extends DigestLike> {
 const activeAttempts = new Map<string, AttemptSlot>();
 const recentFailedAttempts = new Map<string, { attempt: FailedDigestAttempt; expiresAt: number }>();
 const failureCooldowns = new Map<string, number>();
+const gateRejectionReports = new Map<string, number>();
+const GATE_REJECTION_REPORT_COOLDOWN_MS = 30 * 60 * 1000;
 const RECENT_ATTEMPT_MEMORY_MS = 5_000;
 const LOCAL_RECOVERY_MAX_ENTRIES = 100;
 
@@ -268,13 +271,24 @@ export async function readAcceptedSnapshot<T extends DigestLike>(variant: string
  * snapshot ages out. That is correct for a degraded build and invisible when
  * it is wrong: on 2026-09-19 it froze `full` for ~6h with only a console.log.
  * One Sentry issue per variant, at warning level.
+ *
+ * The 120s rejection sentinel is the only backoff for a held snapshot, so a
+ * frozen scope rebuilds ~30x/hour in every region. The condition is sustained,
+ * not an event: one capture per scope per cooldown, per isolate. The capture
+ * rides the request's waitUntil so a frozen isolate cannot drop it mid-incident.
  */
 function reportGateRejection(variant: string, lang: string): void {
   console.log(`[digest-publication] candidate rejected by acceptance gate variant=${variant} lang=${lang}`);
+  const key = scopeKey(variant, lang);
+  const now = Date.now();
+  if ((gateRejectionReports.get(key) ?? 0) > now) return;
+  if (gateRejectionReports.size >= LOCAL_RECOVERY_MAX_ENTRIES) gateRejectionReports.clear();
+  gateRejectionReports.set(key, now + GATE_REJECTION_REPORT_COOLDOWN_MS);
   captureSilentError(new Error('fresh digest rejected by the last-good acceptance gate'), {
     tags: { surface: 'news', component: 'digest-lastgood', stage: 'publish-gate', variant, lang },
     fingerprint: ['digest-lastgood', 'publish-gate-rejected', variant],
     level: 'warning',
+    ctx: getUsageScope()?.ctx,
   });
 }
 
@@ -334,7 +348,13 @@ export async function publishAcceptedSnapshot(
             ...canonicalRichness,
           }
         : null;
-      const decision = shouldReplaceAccepted(current, candidateRichness, now);
+      // Re-measure the incumbent BODY under the current revocation set, as the
+      // Lua gate does. Its stored itemCount is a publication-time count, and a
+      // URL revoked since must not keep inflating it and veto the repair.
+      const measuredCurrentItems = current
+        ? measureServableRichness(current.data, revoked.urls).itemCount
+        : undefined;
+      const decision = shouldReplaceAccepted(current, candidateRichness, now, measuredCurrentItems);
       const canonicalDecision = canonicalMeta
         ? shouldReplaceAccepted(canonicalMeta, candidateRichness, now)
         : null;
@@ -353,7 +373,11 @@ export async function publishAcceptedSnapshot(
         reportGateRejection(variant, lang);
         return 'rejected';
       }
-      const meta: AcceptedSnapshotMeta = { acceptedAt, ...candidateRichness };
+      const meta: AcceptedSnapshotMeta = {
+        acceptedAt,
+        ...candidateRichness,
+        ...nextPeak(current, candidateRichness.itemCount, acceptedAt, now, measuredCurrentItems),
+      };
       const durableWritten = await setCachedJson(lastGoodKey(variant, lang), { ...meta, data }, LASTGOOD_TTL_S);
       if (!durableWritten) {
         console.warn(`[digest-publication] publish unavailable variant=${variant} lang=${lang}`);
@@ -425,6 +449,7 @@ export const __testing__ = {
   activeAttempts,
   recentFailedAttempts,
   failureCooldowns,
+  gateRejectionReports,
   deferDigestAttempt,
   measureServableRichness,
 };
