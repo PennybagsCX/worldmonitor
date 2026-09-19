@@ -203,58 +203,22 @@ export function publishFailedAttempt(
   return attempt;
 }
 
-/**
- * The acceptance gate kept the incumbent. This is not a failed build: the
- * candidate was valid, just narrower. Record that so a later sentinel hit
- * does not recover an unrelated empty-rebuild / build-error from up to 25h
- * ago (#8361). The Lua/sidecar path has already parked the 120s sentinel;
- * this writes only the attempt identity.
- */
-export function publishGateHeldAttempt(
+/** Remember the gate identity locally after its durable publication succeeds. */
+function rememberGateHeldAttempt(
   variant: string,
   lang: string,
+  at: string,
   digestCacheKey?: string,
-  at = new Date().toISOString(),
-): FailedDigestAttempt {
-  const attempt = Object.freeze({ at, reason: 'gate-held' as const });
+): void {
   const now = Date.now();
   recentFailedAttempts.set(scopeKey(variant, lang), {
-    attempt,
+    attempt: Object.freeze({ at, reason: 'gate-held' as const }),
     expiresAt: now + DIGEST_REJECTION_TTL_S * 1000,
   });
   if (digestCacheKey) {
     failureCooldowns.set(digestCacheKey, now + DIGEST_REJECTION_TTL_S * 1000);
   }
   boundLocalRecoveryMaps(now);
-
-  if (!isEligibleScope(variant, lang)) return attempt;
-  const ts = Date.parse(attempt.at);
-  const stored = { ts: Number.isFinite(ts) ? ts : now, outcome: attempt.reason };
-  const persist = (async () => {
-    try {
-      if (process.env.LOCAL_API_MODE === 'tauri-sidecar') {
-        const written = await setCachedJson(attemptMetaKey(variant, lang), stored, ATTEMPT_META_TTL_S);
-        if (!written) {
-          console.warn(`[digest-attempt] gate-held publish unavailable variant=${variant} lang=${lang}`);
-        }
-        return;
-      }
-      const results = await runRedisTransaction([
-        ['SET', attemptMetaKey(variant, lang), JSON.stringify(stored), 'EX', String(ATTEMPT_META_TTL_S)],
-      ]);
-      if (!transactionSucceeded(results, 1)) {
-        console.warn(`[digest-attempt] gate-held publish unavailable variant=${variant} lang=${lang}`);
-      }
-    } catch (err) {
-      console.warn('[digest-attempt] gate-held publish failed:', err);
-      captureSilentError(err, {
-        tags: { surface: 'news', component: 'digest-lastgood', stage: 'gate-held-publish', variant, lang },
-        fingerprint: ['digest-lastgood', 'gate-held-publish-failed'],
-      });
-    }
-  })();
-  scheduleBackground(persist);
-  return attempt;
 }
 
 export async function recoverFailedAttempt(
@@ -412,6 +376,12 @@ export async function publishAcceptedSnapshot(
         ? shouldReplaceAccepted(canonicalMeta, candidateRichness, now)
         : null;
       if (!decision.replace || canonicalDecision && !canonicalDecision.replace) {
+        // The single-process sidecar has no transaction primitive. Publish
+        // identity first, so a visible sentinel always has its matching reason.
+        const attemptWritten = await setCachedJson(
+          attemptMetaKey(variant, lang), { ts: now, outcome: 'gate-held' }, ATTEMPT_META_TTL_S,
+        );
+        if (!attemptWritten) return 'unavailable';
         if (!decision.replace && canonicalDigestKey && currentCanonical.status === 'miss') {
           const cooldownWritten = await setCachedJson(
             canonicalDigestKey,
@@ -423,7 +393,7 @@ export async function publishAcceptedSnapshot(
             return 'unavailable';
           }
         }
-        publishGateHeldAttempt(variant, lang, canonicalDigestKey);
+        rememberGateHeldAttempt(variant, lang, new Date(now).toISOString(), canonicalDigestKey);
         reportGateRejection(variant, lang);
         return 'rejected';
       }
@@ -452,20 +422,19 @@ export async function publishAcceptedSnapshot(
     // letting Lua rebuild it meant a cjson decode/encode round trip, which
     // silently rewrote every empty array in the body as `{}`.
     const keys = canonicalDigestKey
-      ? [lastGoodKey(variant, lang), REVOKED_URLS_KEY, canonicalDigestKey]
-      : [lastGoodKey(variant, lang), REVOKED_URLS_KEY];
+      ? [lastGoodKey(variant, lang), REVOKED_URLS_KEY, attemptMetaKey(variant, lang), canonicalDigestKey]
+      : [lastGoodKey(variant, lang), REVOKED_URLS_KEY, attemptMetaKey(variant, lang)];
     const args = [
       String(now),
       String(LASTGOOD_MAX_AGE_MS),
       String(acceptedAt),
       String(LASTGOOD_TTL_S),
       JSON.stringify(data),
-      ...(canonicalDigestKey ? [
-        String(DIGEST_CACHE_TTL_S),
-        new Date(now - LASTGOOD_MAX_AGE_MS).toISOString(),
-        new Date(now).toISOString(),
-        String(DIGEST_REJECTION_TTL_S),
-      ] : []),
+      String(DIGEST_CACHE_TTL_S),
+      new Date(now - LASTGOOD_MAX_AGE_MS).toISOString(),
+      new Date(now).toISOString(),
+      String(DIGEST_REJECTION_TTL_S),
+      String(ATTEMPT_META_TTL_S),
     ];
     const results = await runRedisPipeline([[
       'EVAL',
@@ -479,7 +448,7 @@ export async function publishAcceptedSnapshot(
       console.warn(`[digest-publication] publish unavailable variant=${variant} lang=${lang}`);
       return 'unavailable';
     } else if (outcome.result === 0) {
-      publishGateHeldAttempt(variant, lang, canonicalDigestKey);
+      rememberGateHeldAttempt(variant, lang, new Date(now).toISOString(), canonicalDigestKey);
       reportGateRejection(variant, lang);
       return 'rejected';
     } else if (outcome.result === -1) {
@@ -507,5 +476,4 @@ export const __testing__ = {
   gateRejectionReports,
   deferDigestAttempt,
   measureServableRichness,
-  publishGateHeldAttempt,
 };

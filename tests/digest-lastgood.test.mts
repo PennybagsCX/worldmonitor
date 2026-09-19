@@ -431,10 +431,10 @@ describe('durable last-good wiring (#7084)', () => {
     const calls = evalCalls();
     assert.equal(calls.length, 1, 'the publish must be a single EVAL, not a read-decide-write pair');
     const cmd = calls[0] as string[];
-    // ['EVAL', script, '2', bodyKey, revocationKey, ...argv] — every policy
+    // ['EVAL', script, '3', bodyKey, revocationKey, attemptKey, ...argv] — every policy
     // input and the write are inside one atomic operation, which is what
     // closes the two-isolate lost-update race.
-    assert.equal(cmd[2], '2');
+    assert.equal(cmd[2], '3');
     assert.equal(cmd[3], lastGoodKey('full', 'en'));
     assert.match(String(cmd[1]), /return 0/, 'the script must be able to refuse a narrower candidate');
     assert.equal(
@@ -448,8 +448,8 @@ describe('durable last-good wiring (#7084)', () => {
     const generatedAt = new Date(NOW - 60 * 60 * 1000).toISOString();
     await mod.__testing__.publishAcceptedSnapshot('full', 'en', body(['https://a/1'], COVERAGE, generatedAt));
     const cmd = evalCalls()[0] as string[];
-    // ['EVAL', script, '2', bodyKey, revokedKey, now, maxAge, acceptedAt, ttl, dataJson]
-    assert.equal(Number(cmd[7]), Date.parse(generatedAt), 'acceptedAt rides the content clock');
+    // ['EVAL', script, '3', bodyKey, revokedKey, attemptKey, now, maxAge, acceptedAt, ttl, dataJson]
+    assert.equal(Number(cmd[8]), Date.parse(generatedAt), 'acceptedAt rides the content clock');
   });
 
   it('a lost guarded write (script returns 0) is a kept snapshot, not an error', async () => {
@@ -622,12 +622,18 @@ describe('durable last-good wiring (#7084)', () => {
     });
     try {
       await mod.__testing__.publishAcceptedSnapshot('full', 'en', narrow, canonicalKey);
-      assert.equal(stub.writes[0]?.key, canonicalKey);
-      assert.equal(stub.writes[0]?.value, '__WM_NEG__');
-      assert.equal(stub.writes[0]?.ttl, 120);
-      assert.equal(stub.writes[1]?.key, attemptMetaKey('full', 'en'));
-      assert.equal((stub.writes[1]?.value as { outcome: string }).outcome, 'gate-held');
-      assert.equal(stub.writes[1]?.ttl, ATTEMPT_META_TTL_S);
+      assert.equal(stub.writes[0]?.key, attemptMetaKey('full', 'en'));
+      assert.equal((stub.writes[0]?.value as { outcome: string }).outcome, 'gate-held');
+      assert.equal(stub.writes[0]?.ttl, ATTEMPT_META_TTL_S);
+      assert.equal(stub.writes[1]?.key, canonicalKey);
+      assert.equal(stub.writes[1]?.value, '__WM_NEG__');
+      assert.equal(stub.writes[1]?.ttl, 120);
+
+      stub.writes.length = 0;
+      stub.writeResult = false;
+      assert.equal(await mod.__testing__.publishAcceptedSnapshot('full', 'en', narrow, canonicalKey), 'unavailable');
+      assert.deepEqual(stub.writes.map((write) => write.key), [attemptMetaKey('full', 'en')],
+        'a failed identity write must not expose a sentinel');
     } finally {
       if (originalMode === undefined) delete process.env.LOCAL_API_MODE;
       else process.env.LOCAL_API_MODE = originalMode;
@@ -796,10 +802,11 @@ describe('durable last-good wiring (#7084)', () => {
     await mod.listFeedDigest(ctx(), { variant: 'full', lang: 'en' });
     assert.equal(evalCalls().length, 1, 'a fresh build is exactly when the snapshot should be refreshed');
     const command = evalCalls()[0] as string[];
-    assert.equal(command[2], '3', 'canonical and durable publication must share one atomic script');
+    assert.equal(command[2], '4', 'canonical and durable publication must share one atomic script');
     assert.equal(command[3], lastGoodKey('full', 'en'));
-    assert.equal(command[5], 'news:digest:v1:full:en');
-    assert.equal(Number(command[11]), 900);
+    assert.equal(command[5], attemptMetaKey('full', 'en'));
+    assert.equal(command[6], 'news:digest:v1:full:en');
+    assert.equal(Number(command[12]), 900);
   });
 
   it('a publication outage defers the next build so the isolate fallback can serve', async () => {
@@ -1118,13 +1125,13 @@ describe('durable last-good wiring (#7084)', () => {
     await mod.__testing__.publishAcceptedSnapshot('full', 'en', candidate);
     const cmd = evalCalls()[0] as string[];
     assert.equal(cmd[4], REVOKED_URLS_KEY, 'the authoritative gate must read current revocations');
-    const sent = JSON.parse(String(cmd[9]));
+    const sent = JSON.parse(String(cmd[10]));
     assert.equal(
       sent.categories.politics.items.length, 2,
       'the stored body must keep revoked items so a lifted revocation restores them',
     );
     assert.equal(
-      String(cmd[9]), JSON.stringify(candidate),
+      String(cmd[10]), JSON.stringify(candidate),
       'the body is sent as-is so the script can splice it without re-encoding',
     );
   });
@@ -1209,14 +1216,16 @@ describe('durable last-good wiring (#7084)', () => {
       'full', 'en', body(['https://a/1'], COVERAGE), 'news:digest:v1:full:en',
     );
     const after = Date.now();
-    assert.equal(stub.transactionCalls.length, 1, 'gate-held identity is one SET, not a sentinel rewrite');
-    const [attemptSet] = stub.transactionCalls[0] as string[][];
-    assert.equal(attemptSet[0], 'SET');
-    assert.equal(attemptSet[1], attemptMetaKey('full', 'en'));
-    const stored = JSON.parse(attemptSet[2]) as { ts: number; outcome: string };
-    assert.equal(stored.outcome, 'gate-held');
-    assert.ok(stored.ts >= before && stored.ts <= after, 'attemptedAt is the rejection, not a prior failure');
-    assert.equal(attemptSet[4], String(ATTEMPT_META_TTL_S));
+    assert.equal(stub.transactionCalls.length, 0, 'no deferred write may race the atomic gate identity');
+    const cmd = evalCalls()[0] as string[];
+    assert.equal(cmd[2], '4');
+    assert.equal(cmd[5], attemptMetaKey('full', 'en'));
+    assert.equal(cmd[6], 'news:digest:v1:full:en');
+    assert.ok(Number(cmd[7]) >= before && Number(cmd[7]) <= after);
+    assert.equal(cmd.at(-1), String(ATTEMPT_META_TTL_S));
+    const recovered = await mod.__testing__.recoverFailedAttempt('full', 'en', { at: '', reason: 'build-error' });
+    assert.equal(recovered.reason, 'gate-held');
+    assert.equal(recovered.at, new Date(Number(cmd[7])).toISOString());
   });
 
   it('a fully-revoked candidate does not record a gate-held attempt', async () => {
