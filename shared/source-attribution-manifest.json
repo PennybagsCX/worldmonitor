@@ -10219,6 +10219,9 @@
           "path": "scripts/seed-wb-indicators.mjs"
         },
         {
+          "path": "scripts/shared/notify-fields.cjs"
+        },
+        {
           "path": "scripts/validate-seed-migration.mjs"
         },
         {
@@ -10226,6 +10229,9 @@
         },
         {
           "path": "server/_shared/intel-history-embed.ts"
+        },
+        {
+          "path": "server/_shared/notify-fields.ts"
         },
         {
           "path": "server/gateway.ts"
