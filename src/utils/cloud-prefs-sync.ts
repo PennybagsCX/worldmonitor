@@ -1415,12 +1415,14 @@ export function applyLocalPreferenceImport(entries: Array<[string, string]>): vo
       }
     } catch (error) {
       // Remove replacements first so restoring a larger old value has its original space.
+      let rollbackFailed = false;
       for (const [key] of previous.slice(0, written)) {
-        if (!safeStorageRemoveChecked(key)) throw new Error('Settings rollback failed.');
+        if (!safeStorageRemoveChecked(key)) rollbackFailed = true;
       }
       for (const [key, value] of previous.slice(0, written)) {
-        if (value !== null && !safeStorageSetChecked(key, value)) throw new Error('Settings rollback failed.');
+        if (value !== null && !safeStorageSetChecked(key, value)) rollbackFailed = true;
       }
+      if (rollbackFailed) throw new Error('Settings rollback failed.');
       throw error;
     }
   } finally {
