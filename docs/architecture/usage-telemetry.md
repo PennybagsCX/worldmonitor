@@ -304,6 +304,33 @@ add an entry to `RPC_CACHE_TIER` in `server/gateway.ts`.
 | order by n desc
 ```
 
+### Authorization-failure fan-out per identity (#8406)
+
+Volumetric rate limits do not catch a slow scanner that fans out across many
+routes under the global ceiling. Watch **distinct routes** with
+`tier_403` / `auth_401` per authenticated `principal_id` instead. Thresholds are
+**split by `auth_kind`** (JWT paywall browsing ≠ free API-key fan-out). Full
+decision, measured baseline, and operator runbook:
+[`docs/operations/authz-failure-signal.md`](../operations/authz-failure-signal.md).
+
+```kusto
+['wm_api_usage']
+| where event_type == "request"
+  and reason in ("tier_403", "auth_401")
+  and isnotnull(principal_id)
+  and _time > ago(1h)
+| summarize distinct_routes = dcount(route),
+            failures = count(),
+            sample_routes = make_set(route, 20)
+            by principal_id, customer_id, auth_kind
+| where (auth_kind in ("clerk_jwt", "mcp_oauth") and distinct_routes >= 8)
+     or (auth_kind in ("user_api_key", "enterprise_api_key", "widget_key") and distinct_routes >= 40)
+| order by distinct_routes desc
+```
+
+Anon traffic has `principal_id == null`; use the optional IP secondary query in
+the runbook if needed.
+
 ### Upstream cost per customer (provider attribution)
 
 ```kusto
