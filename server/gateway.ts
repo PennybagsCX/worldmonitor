@@ -1,3 +1,4 @@
+import { consumeSubRequestAdmission } from './_shared/sub-request-admission';
 import { hasCurrentEntitlementCoverage } from './_shared/entitlement-coverage';
 /**
  * Shared gateway logic for per-domain Vercel edge functions.
@@ -27,7 +28,6 @@ import {
   checkFailClosedScopedIpRateLimit,
   formatTrustedRateLimitPrincipal,
   hasEndpointRatePolicy,
-  SUB_REQUEST_MARKER_HEADER,
   TRUSTED_RATE_LIMIT_PRINCIPAL_HEADER,
 } from './_shared/rate-limit';
 import {
@@ -773,15 +773,8 @@ function attachRequiredBboxDiagnosticHeaders(
 // withAuthenticatedUserId, and the rate-limit principal is stamped once all
 // auth has resolved (see withTrustedRateLimitPrincipal).
 //
-// `SUB_REQUEST_MARKER_HEADER` is likewise gateway-internal (only a handler
-// that passed the pre-charge may set it, via the forwarded sub-request
-// headers), but it is deliberately NOT stripped here. The strip runs on the
-// OUTER caller request — where any client copy must die — while the inner
-// sub-request pass needs its marker intact to inherit the pre-charged
-// admission instead of taking a second egress-keyed one (see the
-// rate-limiting section). The internal-MCP block below has its own
-// strip-and-rebuild step that ALSO strips the two principal headers
-// alongside INTERNAL_MCP_VERIFIED_HEADER — both layers are defense-in-depth.
+// The sub-request header remains untrusted until its one-use Redis admission
+// is consumed. Presence alone never bypasses a gateway limit.
 function cloneRequestWithHeaders(request: Request, headers: Headers): Request {
   return new Request(request, { headers });
 }
@@ -1169,14 +1162,7 @@ export function createDomainGateway(
     // regardless of whether the X-WM-MCP-Internal header is present, so that
     // the legacy `validateApiKey` path also receives a sanitised request.
     //
-    // `SUB_REQUEST_MARKER_HEADER` is deliberately NOT stripped here: this
-    // strip runs on the OUTER caller request (where a client copy must die —
-    // that is enforced by the batch recursion guard and by
-    // `resolveServerSubRequestCharge` refusing marked inbound callers), while
-    // the inner sub-request pass needs its marker intact to inherit the
-    // pre-charged admission (see the rate-limiting section). Stripping it
-    // here would erase the skip signal on every legitimate re-dispatch and
-    // re-open the egress-keyed double charge.
+    // Sub-request admission is verified separately before rate limiting.
     //
     // Mutation invariant: every subsequent request reconstruction in this
     // function must build from the (already-stripped) `request`, not from
@@ -2079,20 +2065,11 @@ export function createDomainGateway(
     // Gateway rate limiting — two-phase: endpoint-specific first, then global fallback.
     // Confirmed paid principals use per-user buckets; other traffic uses IP.
     //
-    // Server-initiated sub-requests (stamped with the sub-request marker by a
-    // handler that already pre-charged the caller's budget via
-    // `chargeServerSubRequestOperation`) MUST NOT be charged a second time:
-    // the inner pass would key them to the platform's egress IP, which is
-    // exactly the shared bucket #8399 closes. The pre-charge is the admission;
-    // the inner pass inherits it. The principal stamp still travels on the
-    // sub-request so handlers deeper in the chain keep the right attribution.
-    //
-    // The skip covers the endpoint/global limiter only. Auth gates above
-    // (validateApiKey, entitlements) still run on the sub-request's own
-    // forwarded credentials — the sub-request re-authenticates exactly as a
-    // direct call would; only the rate-limit admission is inherited.
-    const isServerSubRequest = request.headers.has(SUB_REQUEST_MARKER_HEADER);
-    //
+    // Only a single-use admission for this exact request waives the prepaid
+    // endpoint/global limit. Account meters and auth still run for every call.
+    const isServerSubRequest = await consumeSubRequestAdmission(request, rateLimitPrincipalUserId
+      ? formatTrustedRateLimitPrincipal(rateLimitPrincipalUserId, isUserApiKey ? 'api_key' : 'session')
+      : null);
     // Google searches need their tighter upstream budget even after MCP admission.
     if (!isServerSubRequest && internalMcpVerified && (pathname === '/api/aviation/v1/search-google-flights'
       || pathname === '/api/aviation/v1/search-google-dates')) {
@@ -2112,16 +2089,7 @@ export function createDomainGateway(
     // limiter here would create misleading double-counting and could 429
     // legitimate Pro tool fetches that pass the upstream cap.
     //
-    // Server-initiated sub-requests skip the endpoint/global limiter below,
-    // not the auth gates above: the outer pre-charge
-    // (`chargeServerSubRequestOperation`) is the admission for the endpoint
-    // AND global buckets, and the inner pass would otherwise key a second
-    // admission to the platform's egress IP. Auth (validateApiKey,
-    // entitlements) still runs on the sub-request's own forwarded
-    // credentials — the sub-request re-authenticates exactly as a direct
-    // call would; only the rate-limit admission is inherited.
-    const skipInnerLimiterForSubRequest = isServerSubRequest;
-    if (!internalMcpVerified && !skipInnerLimiterForSubRequest) {
+    if (!internalMcpVerified) {
       // These local provider lookups use the sidecar cache without Upstash.
       // Keep these exceptions exact-path; cloud requests retain the provider cap.
       const isSidecarProviderLookup = process.env.LOCAL_API_MODE === 'tauri-sidecar'
@@ -2129,7 +2097,7 @@ export function createDomainGateway(
           || pathname === '/api/military/v1/get-wingbits-live-flight'
           || pathname === '/api/imagery/v1/search-imagery'
           || pathname === '/api/webcam/v1/get-webcam-image');
-      const endpointRlResponse = isSidecarProviderLookup ? null : rateLimitPrincipalUserId
+      const endpointRlResponse = isServerSubRequest || isSidecarProviderLookup ? null : rateLimitPrincipalUserId
         ? await checkEndpointRateLimit(request, pathname, corsHeaders, {
             principalUserId: rateLimitPrincipalUserId,
             principalScope: isUserApiKey ? 'api_key' : 'session',
@@ -2281,7 +2249,7 @@ export function createDomainGateway(
         }
       }
 
-      if (!governedByApiKeyLayer && !hasEndpointRatePolicy(pathname)) {
+      if (!isServerSubRequest && !governedByApiKeyLayer && !hasEndpointRatePolicy(pathname)) {
         // WORLDMONITOR-12A: scope the bucket to the credential, not just the
         // user. An API key and a browser session resolve to the same Clerk id,
         // so without this a customer's own scraper drains the 600/min budget

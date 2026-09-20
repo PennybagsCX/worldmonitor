@@ -1,3 +1,4 @@
+import { SUB_REQUEST_MARKER_HEADER } from './sub-request-admission';
 import { Ratelimit, type Duration } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
 import { getClientIp, UNKNOWN_CLIENT_IP } from './client-ip';
@@ -275,15 +276,8 @@ export type EndpointRateLimitOptions = RateLimitOptions;
  */
 export const TRUSTED_RATE_LIMIT_PRINCIPAL_HEADER = 'x-wm-rl-principal';
 
-/**
- * Marker the gateway stamps on a re-dispatched server-initiated sub-request
- * so the inner pass can prove it is server-initiated even when the platform
- * egress IP is public and routable (Vercel NAT egress usually is). Inbound
- * client copies are stripped at gateway entry exactly like the rate-limit
- * principal stamp, so a client cannot forge it. Handlers forwarding into
- * sub-requests must propagate it.
- */
-export const SUB_REQUEST_MARKER_HEADER = 'x-wm-sub-request';
+/** Opaque single-use admission, authenticated by consumeSubRequestAdmission. */
+export { SUB_REQUEST_MARKER_HEADER } from './sub-request-admission';
 
 export function formatTrustedRateLimitPrincipal(
   principalUserId: string,
@@ -402,8 +396,7 @@ export interface ServerSubRequestCharge {
  * INBOUND ONLY: pass the caller's original request, never the re-dispatched
  * sub-request. A public egress IP on the inbound side names a real external
  * caller and stays attributed; the sub-request side is recognised by the
- * `SUB_REQUEST_MARKER_HEADER` the gateway stamps (see
- * `isServerSubRequest`), not by this helper.
+ * `SUB_REQUEST_MARKER_HEADER` admission verified by the gateway, not by this helper.
  *
  * The fallback is observable: refusal paths report through
  * `reportRateLimitDegraded` with the fixed stage
@@ -417,9 +410,8 @@ export interface ServerSubRequestCharge {
  * then forget to honour `unattributed`. (#8399)
  */
 export function resolveServerSubRequestCharge(inbound: Request): ServerSubRequestCharge {
-  // A request that already carries the sub-request marker IS the inner
-  // dispatch, not an inbound caller — it must never receive a fresh
-  // egress-keyed allowance of its own.
+  // Reject marked callers conservatively, whether the marker is genuine or
+  // forged. Only consumeSubRequestAdmission can authenticate an inner call.
   if (inbound.headers.has(SUB_REQUEST_MARKER_HEADER)) {
     return { opts: {}, unattributed: true };
   }
@@ -432,16 +424,6 @@ export function resolveServerSubRequestCharge(inbound: Request): ServerSubReques
     return { opts: {}, unattributed: false };
   }
   return { opts: {}, unattributed: true };
-}
-
-/**
- * True when the request is a re-dispatched server-initiated sub-request (the
- * inner pass), as opposed to an inbound caller request. The gateway stamps
- * `SUB_REQUEST_MARKER_HEADER` when it re-dispatches; handlers forwarding into
- * sub-requests must propagate it.
- */
-export function isServerSubRequest(request: Request): boolean {
-  return request.headers.has(SUB_REQUEST_MARKER_HEADER);
 }
 
 /**
@@ -476,12 +458,8 @@ export interface ServerSubRequestRefusal {
  *     mirroring the gateway's two-phase order — a limiter refusal becomes the
  *     status/body the caller would have received directly.
  *
- * NOTE (known limitation, #8399 follow-up): the gateway's per-account
- * burst/daily meter (#3199) and the enterprise per-key hash bucket are NOT
- * charged per sub-operation here — only the endpoint/global caller buckets
- * are. A 20-op batch spends one outer per-account admission but up to 20
- * endpoint admissions. The egress-shared-bucket bypass (the pentest finding)
- * is closed; the per-account multiplier remains open.
+ * Account burst/daily and enterprise-key meters remain enforced by the inner
+ * gateway; this pre-charge covers endpoint/global limits only.
  */
 export async function chargeServerSubRequestOperation(
   inbound: Request,

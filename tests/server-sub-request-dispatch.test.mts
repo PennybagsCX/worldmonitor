@@ -127,9 +127,6 @@ describe('server-initiated sub-request dispatch path (#8399)', () => {
 
     assert.equal(charge.unattributed, true);
 
-    let dispatched = false;
-    const dispatch = async () => { dispatched = true; };
-
     const refused = await chargeServerSubRequestOperation(
       noIdentity,
       POLICY_PATH,
@@ -140,9 +137,7 @@ describe('server-initiated sub-request dispatch path (#8399)', () => {
       status: 429,
       body: { error: 'Too many requests', reason: 'unattributed-sub-request' },
     });
-    assert.equal(dispatched, false, 'an unattributed sub-request must never dispatch');
     assert.equal(keys.length, 0, 'an unattributed sub-request must not receive an egress-keyed allowance');
-    await dispatch;
   });
 
   it('charges an admitted policy-backed operation to the caller bucket via the shared path', async () => {
@@ -163,7 +158,7 @@ describe('server-initiated sub-request dispatch path (#8399)', () => {
     for (const key of keys) {
       assert.match(
         key,
-        new RegExp(`^rl:ep:${POLICY_PATH.replaceAll('/', '/')}:ip:${CALLER_IP}(:|$)`),
+        new RegExp(`^rl:ep:${POLICY_PATH}:ip:${CALLER_IP}(:|$)`),
         `shared-path charge must name the sub-operation path and the caller IP, got ${key}`,
       );
     }

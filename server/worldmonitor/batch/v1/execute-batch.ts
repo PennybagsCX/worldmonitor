@@ -1,3 +1,4 @@
+import { issueSubRequestAdmission } from '../../../_shared/sub-request-admission';
 /**
  * RPC: executeBatch -- Runs up to 20 documented GET operations in one request.
  *
@@ -30,9 +31,9 @@ import {
 } from '../../../../src/generated/server/worldmonitor/batch/v1/service_server';
 import {
   chargeServerSubRequestOperation,
+  formatTrustedRateLimitPrincipal,
   resolveServerSubRequestCharge,
   SUB_REQUEST_MARKER_HEADER,
-  TRUSTED_RATE_LIMIT_PRINCIPAL_HEADER,
   type ServerSubRequestCharge,
 } from '../../../_shared/rate-limit';
 
@@ -47,22 +48,9 @@ export const MAX_SUB_RESPONSE_BYTES = 1_048_576;
 // recurse even if path validation regresses.
 export const BATCH_MARKER_HEADER = 'x-wm-batch';
 
-// Only credentials + content negotiation cross into sub-requests. Everything
-// else (cookies, tracing) is dropped by allowlist — the gateway re-derives
-// what it needs per sub-request. Two gateway-internal markers DO cross:
-// the rate-limit principal stamp (so the inner pass can attribute the
-// sub-request to the caller instead of the platform egress) and the
-// sub-request marker (so the inner pass proves it is server-initiated even
-// when the egress IP is public). Both are stripped from inbound client
-// requests at gateway entry, so a client cannot forge them.
-const FORWARDED_HEADERS = [
-  'authorization',
-  'x-worldmonitor-key',
-  'x-api-key',
-  'accept-language',
-  TRUSTED_RATE_LIMIT_PRINCIPAL_HEADER,
-  SUB_REQUEST_MARKER_HEADER,
-] as const;
+// Re-authenticate each operation. Trusted principal headers stay local; the
+// gateway consumes a separate, request-bound admission token after pre-charge.
+const FORWARDED_HEADERS = ['authorization', 'x-worldmonitor-key', 'x-api-key', 'accept-language'] as const;
 
 // A batched path must name a documented RPC: /api/<domain>/v<N>/<rpc> (proto
 // domains) or /api/v2/<domain>/<rpc> (partner v2). Query strings are allowed
@@ -154,11 +142,6 @@ function buildSubRequestHeaders(inbound: Headers): Headers {
   headers.set('accept', 'application/json');
   headers.set('user-agent', inbound.get('user-agent') ?? DEFAULT_SUB_REQUEST_USER_AGENT);
   headers.set(BATCH_MARKER_HEADER, '1');
-  // Proves the inner pass is server-initiated even when the platform egress
-  // IP is public and routable (see SUB_REQUEST_MARKER_HEADER). The gateway
-  // strips inbound client copies at entry, so only a handler that passed the
-  // pre-charge can set it.
-  headers.set(SUB_REQUEST_MARKER_HEADER, '1');
   return headers;
 }
 
@@ -194,6 +177,7 @@ async function runOperation(
   op: ValidatedOperation,
   headers: Headers,
   fetchImpl: FetchLike,
+  charge: ServerSubRequestCharge,
 ): Promise<BatchOperationResult> {
   if (!op.target) {
     return { id: op.id, status: 0, error: op.error ?? 'invalid_path' };
@@ -201,9 +185,19 @@ async function runOperation(
 
   let response: Response;
   try {
+    const operationHeaders = new Headers(headers);
+    const admission = await issueSubRequestAdmission(new Request(op.target.toString(), {
+      method: 'GET', headers: operationHeaders,
+    }), charge.opts.principalUserId
+      ? formatTrustedRateLimitPrincipal(charge.opts.principalUserId, charge.opts.principalScope ?? 'session')
+      : null);
+    if (!admission) {
+      return { id: op.id, status: 503, body: { error: 'Rate-limit service temporarily unavailable' }, error: '' };
+    }
+    operationHeaders.set(SUB_REQUEST_MARKER_HEADER, admission);
     response = await fetchImpl(op.target.toString(), {
       method: 'GET',
-      headers,
+      headers: operationHeaders,
       redirect: 'manual',
       signal: AbortSignal.timeout(SUB_REQUEST_TIMEOUT_MS),
     });
@@ -279,7 +273,7 @@ export function createExecuteBatch(
     const results = await Promise.all(
       validated.map(async (op) => {
         const refused = await chargeCaller(op, ctx.request, charge);
-        return refused ?? runOperation(op, headers, fetchImpl);
+        return refused ?? runOperation(op, headers, fetchImpl, charge);
       }),
     );
 
