@@ -27,6 +27,7 @@ import {
   checkFailClosedScopedIpRateLimit,
   formatTrustedRateLimitPrincipal,
   hasEndpointRatePolicy,
+  SUB_REQUEST_MARKER_HEADER,
   TRUSTED_RATE_LIMIT_PRINCIPAL_HEADER,
 } from './_shared/rate-limit';
 import {
@@ -770,10 +771,17 @@ function attachRequiredBboxDiagnosticHeaders(
 // entry (see stripClientTrustedHeaders); the authenticated user id is re-
 // injected after Clerk / wm_ user-key / legacy bearer auth via
 // withAuthenticatedUserId, and the rate-limit principal is stamped once all
-// auth has resolved (see withTrustedRateLimitPrincipal). The internal-MCP
-// block below has its own strip-and-rebuild step that ALSO strips these
-// headers alongside INTERNAL_MCP_VERIFIED_HEADER — both layers are
-// defense-in-depth.
+// auth has resolved (see withTrustedRateLimitPrincipal).
+//
+// `SUB_REQUEST_MARKER_HEADER` is likewise gateway-internal (only a handler
+// that passed the pre-charge may set it, via the forwarded sub-request
+// headers), but it is deliberately NOT stripped here. The strip runs on the
+// OUTER caller request — where any client copy must die — while the inner
+// sub-request pass needs its marker intact to inherit the pre-charged
+// admission instead of taking a second egress-keyed one (see the
+// rate-limiting section). The internal-MCP block below has its own
+// strip-and-rebuild step that ALSO strips the two principal headers
+// alongside INTERNAL_MCP_VERIFIED_HEADER — both layers are defense-in-depth.
 function cloneRequestWithHeaders(request: Request, headers: Headers): Request {
   return new Request(request, { headers });
 }
@@ -1153,13 +1161,22 @@ export function createDomainGateway(
     // Defense-in-depth: strip client-controlled copies of the trusted
     // internal-MCP markers BEFORE any other logic runs. The gateway is the
     // ONLY layer permitted to set `x-wm-mcp-internal-verified` /
-    // `x-user-id` (the latter is also set by verified session / user-key
-    // paths below). Without the strip step, an attacker
-    // who sends `x-wm-mcp-internal-verified: 1` from outside could spoof
-    // premium context to any handler that reads these markers via
-    // `isCallerPremium`. The strip MUST run regardless of whether the
-    // X-WM-MCP-Internal header is present, so that the legacy
-    // `validateApiKey` path also receives a sanitised request.
+    // `x-user-id` / the rate-limit principal stamp. Without the strip step,
+    // an attacker who sends `x-wm-mcp-internal-verified: 1` from outside
+    // could spoof premium context to any handler that reads these markers
+    // via `isCallerPremium`, and a forged principal stamp would let any
+    // caller name the bucket their fan-out is charged to. The strip MUST run
+    // regardless of whether the X-WM-MCP-Internal header is present, so that
+    // the legacy `validateApiKey` path also receives a sanitised request.
+    //
+    // `SUB_REQUEST_MARKER_HEADER` is deliberately NOT stripped here: this
+    // strip runs on the OUTER caller request (where a client copy must die —
+    // that is enforced by the batch recursion guard and by
+    // `resolveServerSubRequestCharge` refusing marked inbound callers), while
+    // the inner sub-request pass needs its marker intact to inherit the
+    // pre-charged admission (see the rate-limiting section). Stripping it
+    // here would erase the skip signal on every legitimate re-dispatch and
+    // re-open the egress-keyed double charge.
     //
     // Mutation invariant: every subsequent request reconstruction in this
     // function must build from the (already-stripped) `request`, not from
@@ -1391,6 +1408,14 @@ export function createDomainGateway(
       trusted.delete(INTERNAL_MCP_NONCE_HEADER);
       trusted.set(INTERNAL_MCP_VERIFIED_HEADER, getInternalMcpVerifiedNonce());
       trusted.set(TRUSTED_USER_ID_HEADER, verified.userId);
+      // The verified MCP caller is a confirmed paid principal: stamp the
+      // rate-limit principal here too, so a downstream fan-out (e.g. a batch
+      // issued through the MCP tool path) charges the verified userId bucket
+      // instead of silently downgrading to the caller's IP.
+      trusted.set(
+        TRUSTED_RATE_LIMIT_PRINCIPAL_HEADER,
+        formatTrustedRateLimitPrincipal(verified.userId, 'session'),
+      );
       const rebuildInit: RequestInit = { method: request.method, headers: trusted };
       if (bodyBytes !== null) rebuildInit.body = bodyBytes;
       request = new Request(request.url, rebuildInit);
@@ -2054,8 +2079,22 @@ export function createDomainGateway(
     // Gateway rate limiting — two-phase: endpoint-specific first, then global fallback.
     // Confirmed paid principals use per-user buckets; other traffic uses IP.
     //
+    // Server-initiated sub-requests (stamped with the sub-request marker by a
+    // handler that already pre-charged the caller's budget via
+    // `chargeServerSubRequestOperation`) MUST NOT be charged a second time:
+    // the inner pass would key them to the platform's egress IP, which is
+    // exactly the shared bucket #8399 closes. The pre-charge is the admission;
+    // the inner pass inherits it. The principal stamp still travels on the
+    // sub-request so handlers deeper in the chain keep the right attribution.
+    //
+    // The skip covers the endpoint/global limiter only. Auth gates above
+    // (validateApiKey, entitlements) still run on the sub-request's own
+    // forwarded credentials — the sub-request re-authenticates exactly as a
+    // direct call would; only the rate-limit admission is inherited.
+    const isServerSubRequest = request.headers.has(SUB_REQUEST_MARKER_HEADER);
+    //
     // Google searches need their tighter upstream budget even after MCP admission.
-    if (internalMcpVerified && (pathname === '/api/aviation/v1/search-google-flights'
+    if (!isServerSubRequest && internalMcpVerified && (pathname === '/api/aviation/v1/search-google-flights'
       || pathname === '/api/aviation/v1/search-google-dates')) {
       const endpointRlResponse = await checkEndpointRateLimit(request, pathname, corsHeaders, {
         principalUserId: request.headers.get(TRUSTED_USER_ID_HEADER)!,
@@ -2072,7 +2111,17 @@ export function createDomainGateway(
     // already enforced 50/day + 60/min per userId in api/mcp.ts. A second
     // limiter here would create misleading double-counting and could 429
     // legitimate Pro tool fetches that pass the upstream cap.
-    if (!internalMcpVerified) {
+    //
+    // Server-initiated sub-requests skip the endpoint/global limiter below,
+    // not the auth gates above: the outer pre-charge
+    // (`chargeServerSubRequestOperation`) is the admission for the endpoint
+    // AND global buckets, and the inner pass would otherwise key a second
+    // admission to the platform's egress IP. Auth (validateApiKey,
+    // entitlements) still runs on the sub-request's own forwarded
+    // credentials — the sub-request re-authenticates exactly as a direct
+    // call would; only the rate-limit admission is inherited.
+    const skipInnerLimiterForSubRequest = isServerSubRequest;
+    if (!internalMcpVerified && !skipInnerLimiterForSubRequest) {
       // These local provider lookups use the sidecar cache without Upstash.
       // Keep these exceptions exact-path; cloud requests retain the provider cap.
       const isSidecarProviderLookup = process.env.LOCAL_API_MODE === 'tauri-sidecar'

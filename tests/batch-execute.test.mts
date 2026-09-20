@@ -3,11 +3,12 @@
  * (POST /api/batch/v1/execute, server/worldmonitor/batch/v1/execute-batch.ts).
  *
  * The handler re-dispatches each operation as a same-origin GET through the
- * public gateway, so the security posture rests on four invariants pinned
+ * public gateway, so the security posture rests on five invariants pinned
  * here:
  *   1. only same-origin, documented-RPC-shaped paths are fetched (SSRF guard);
- *   2. only credential/negotiation headers cross into sub-requests — cookies
- *      and gateway trust markers (x-user-id) never do;
+ *   2. only credential/negotiation headers plus the two gateway-internal
+ *      sub-request markers cross into sub-requests — cookies and the legacy
+ *      x-user-id marker never do;
  *   3. a batch can never recurse (marker header + /api/batch/* path both
  *      refuse);
  *   4. the endpoint itself is NOT public — anonymous callers get 401 from the
@@ -15,7 +16,9 @@
  *   5. every sub-operation is charged to the BATCH CALLER's own rate-limit
  *      bucket before dispatch. The sub-request's own gateway pass keys its
  *      limits to the platform's fetch egress IP, so without this pre-charge a
- *      batch is a per-IP quota bypass.
+ *      batch is a per-IP quota bypass. The inner gateway pass skips its own
+ *      limiter for marked sub-requests (the pre-charge is the admission), so
+ *      admitted operations are charged exactly once — never egress-keyed.
  */
 
 import assert from 'node:assert/strict';
@@ -31,6 +34,7 @@ import type { FetchLike } from '../server/worldmonitor/batch/v1/execute-batch.ts
 import {
   __resetRateLimitForTest,
   hasEndpointRatePolicy,
+  SUB_REQUEST_MARKER_HEADER,
   TRUSTED_RATE_LIMIT_PRINCIPAL_HEADER,
 } from '../server/_shared/rate-limit.ts';
 import { installRedis } from './helpers/fake-upstash-redis.mts';
@@ -139,9 +143,16 @@ describe('executeBatch handler', () => {
     assert.equal(sent.get(BATCH_MARKER_HEADER), '1');
     assert.equal(sent.get('accept'), 'application/json');
     assert.equal(sent.get('user-agent'), 'my-agent/2.0');
-    // Cookies and gateway trust markers must never cross into sub-requests.
+    // Cookies and the legacy user-id trust marker must never cross into
+    // sub-requests.
     assert.equal(sent.get('cookie'), null);
     assert.equal(sent.get('x-user-id'), null);
+    // The sub-request marker + principal stamp DO cross: they are what let
+    // the inner gateway pass attribute the sub-request to the caller instead
+    // of the platform egress without charging a second time. Both are
+    // stripped from inbound client requests at gateway entry, so a client
+    // cannot forge them.
+    assert.equal(sent.get(SUB_REQUEST_MARKER_HEADER), '1');
   });
 
   it('sends a descriptive default User-Agent when the caller omits one (CF WAF rejects generic UAs)', async () => {
@@ -380,9 +391,14 @@ describe('executeBatch handler', () => {
       assert.match(key, /:apikey-user:user_stamped(:|$)/, `expected the stamped principal, got ${key}`);
       assert.ok(!key.includes(CALLER_IP), 'a stamped principal must not fall back to IP');
     }
-    // The trust marker is gateway-internal and must never cross into a sub-request.
+    // The principal stamp is gateway-internal but MUST cross into the
+    // sub-request: it is what lets the inner gateway pass attribute the
+    // sub-request to the caller instead of the platform egress (without
+    // charging a second time — marked sub-requests skip the inner limiter).
+    // The legacy x-user-id marker still never crosses (pinned above).
     const sent = new Headers(calls[0]!.init.headers as HeadersInit);
-    assert.equal(sent.get(TRUSTED_RATE_LIMIT_PRINCIPAL_HEADER), null);
+    assert.equal(sent.get(TRUSTED_RATE_LIMIT_PRINCIPAL_HEADER), 'api_key:user_stamped');
+    assert.equal(sent.get(SUB_REQUEST_MARKER_HEADER), '1');
   });
 
   it('falls back to the caller IP when the stamped principal is absent or malformed', async () => {
@@ -438,7 +454,44 @@ describe('batch gateway access', () => {
     Object.assign(process.env, originalEnv);
   });
 
-  it('strips a client-supplied rate-limit principal before the fan-out charges it', async () => {
+  it('refuses a forged sub-request marker on the outer caller request', async () => {
+    // The sub-request marker is gateway-internal and travels only on
+    // re-dispatched sub-requests (which skip the inner limiter because the
+    // outer pre-charge was the admission). The outer caller request must
+    // never carry it: a client that forges it would otherwise claim
+    // server-initiated status. The batch recursion guard refuses it with
+    // the same 400 as a nested batch, before any fan-out runs.
+    const [{ createDomainGateway, serverOptions }, generated, { batchHandler }] = await Promise.all([
+      import('../server/gateway.ts'),
+      import('../src/generated/server/worldmonitor/batch/v1/service_server.ts'),
+      import('../server/worldmonitor/batch/v1/handler.ts'),
+    ]);
+    delete process.env.WORLDMONITOR_VALID_KEYS;
+    process.env.WM_SESSION_SECRET = 'synthetic-batch-marker-secret-at-least-32-bytes';
+    installRedis({});
+    __resetRateLimitForTest();
+    const { issueSessionToken } = await import('../api/_session.js');
+
+    const token = (await issueSessionToken()).token;
+    const gateway = createDomainGateway(generated.createBatchServiceRoutes(batchHandler, serverOptions));
+    const res = await gateway(
+      new Request(`${ORIGIN}/api/batch/v1/execute`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Origin: ORIGIN,
+          'X-WorldMonitor-Key': token,
+          'x-real-ip': CALLER_IP,
+          [SUB_REQUEST_MARKER_HEADER]: '1',
+        },
+        body: JSON.stringify({ operations: [{ id: 'a', path: '/api/market/v1/list-market-quotes' }] }),
+      }),
+    );
+
+    assert.equal(res.status, 400);
+  });
+
+  it('strips a client-supplied principal stamp before the fan-out charges it', async () => {
     // The stamp is gateway-internal. If an inbound copy survived to the
     // handler, any caller could name the bucket their batch is charged to.
     const [{ createDomainGateway, serverOptions }, generated, { batchHandler }] = await Promise.all([
@@ -489,6 +542,85 @@ describe('batch gateway access', () => {
     for (const key of subOpKeys) {
       assert.ok(key.includes(`:ip:${CALLER_IP}`), `expected the caller's IP bucket, got ${key}`);
     }
+  });
+
+  it('the inner gateway pass does not charge a marked sub-request a second time', async () => {
+    // Pre-charge is the admission; the inner pass inherits it. Without the
+    // skip, every admitted sub-operation would ALSO spend an egress-keyed
+    // admission on re-entry — the shared bucket #8399 closes, plus a
+    // double-spend on the caller's own budget when the stamp travels.
+    //
+    // Uses a stub route (no auth gate) so the probe isolates the limiter
+    // skip from handler behavior: the fake Redis counts `rl:`-keyed limiter
+    // admissions, and the stub handler never touches the limiter itself.
+    // The unmarked control proves the gateway DOES charge a normal request
+    // on this stub (the assertion is about the skip, not about auth).
+    //
+    // NOTE: the stub path is intentionally NOT a real gateway route — a real
+    // route would re-run auth (validateApiKey) on the sub-request's forwarded
+    // credentials, which is correct production behavior (sub-requests
+    // re-authenticate; only the rate-limit admission is inherited) but would
+    // couple this limiter probe to auth fixtures. The stub proves the skip
+    // itself: same pipeline, same limiter, only the marker differs.
+    const [{ createDomainGateway }] = await Promise.all([
+      import('../server/gateway.ts'),
+    ]);
+    const stubRoutes = [
+      {
+        method: 'GET',
+        path: '/api/intelligence/v1/list-material-events',
+        handler: async () => new Response(JSON.stringify({ events: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      },
+    ];
+    // Sanity: the stub really is a no-policy global-fallback path, so the
+    // probe exercises the gateway limiter and nothing else.
+    assert.equal(hasEndpointRatePolicy('/api/intelligence/v1/list-material-events'), false);
+
+    async function gatewayLimiterAdmissions(marked: boolean): Promise<{ status: number; admissions: number }> {
+      const redis = installRedis({});
+      __resetRateLimitForTest();
+      // A session token satisfies the non-public auth gate on the stub; the
+      // limiter assertions below are independent of which bucket it selects.
+      process.env.WM_SESSION_SECRET = 'synthetic-inner-skip-secret-at-least-32-bytes';
+      const { issueSessionToken } = await import('../api/_session.js');
+      const token = (await issueSessionToken()).token;
+      const keys: string[] = [];
+      const base = redis.fetchImpl;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const body = typeof init?.body === 'string' ? init.body : '';
+        for (const match of body.matchAll(/"(rl:[^"]+)"/g)) keys.push(match[1]!);
+        return base(input, init);
+      }) as typeof fetch;
+      const gateway = createDomainGateway(stubRoutes);
+      const headers: Record<string, string> = {
+        Origin: ORIGIN,
+        'X-WorldMonitor-Key': token,
+        'x-real-ip': '66.249.1.1',
+        [TRUSTED_RATE_LIMIT_PRINCIPAL_HEADER]: 'api_key:user_stamped',
+      };
+      if (marked) headers[SUB_REQUEST_MARKER_HEADER] = '1';
+      const res = await gateway(
+        new Request(`${ORIGIN}/api/intelligence/v1/list-material-events`, {
+          method: 'GET',
+          headers,
+        }),
+      );
+      // Drain the body so the gateway's cache-header path settles before the
+      // next installRedis replaces globalThis.fetch.
+      await res.text();
+      return { status: res.status, admissions: keys.length };
+    }
+
+    const control = await gatewayLimiterAdmissions(false);
+    assert.equal(control.status, 200);
+    assert.ok(control.admissions > 0, 'control: an unmarked request must be charged by the gateway');
+
+    const marked = await gatewayLimiterAdmissions(true);
+    assert.equal(marked.status, 200);
+    assert.equal(marked.admissions, 0, 'a marked sub-request must not consume a second (egress-keyed) admission');
   });
 
   it('is NOT public and not premium: anonymous POST gets 401 before any fan-out', async () => {
