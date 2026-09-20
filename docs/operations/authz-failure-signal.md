@@ -61,12 +61,13 @@ Queried production `wm_api_usage` on **2026-09-20** for
 ### What that means
 
 - **Session JWT traffic is quiet.** Almost every free signed-in user who hits a
-  paywall touches one or two premium routes per hour. A 10-route burst (the
-  pen-test) is already above the observed JWT max for the week.
+  paywall touches one or two premium API paths per hour. A burst across ten
+  paths (the pen-test) is already above the observed JWT max for the week.
 - **Free-tier API keys are a different population.** Two keys account for every
-  hour with ≥12 distinct authz-failure routes in the window
-  (`user_3FJla…` with 27 hot hours / peak 73 routes; `user_3F99…` with 8 hot
-  hours / peak 12). Treating them with the JWT threshold would page constantly.
+  hour with ≥12 distinct authz-failure paths in the window
+  (`user_3FJla…` with 27 hot hours / peak `dcount(route)=73`; `user_3F99…`
+  with 8 hot hours / peak 12). Treating them with the JWT threshold would page
+  constantly.
 - **Do not use a single N for all `auth_kind`s.** Split thresholds below.
 
 Re-run the baseline queries in this doc before changing N, and after any week
@@ -80,7 +81,7 @@ that included a known pen-test or load exercise.
 | Metric | Distinct `route` with `tier_403` or `auth_401` | Same |
 | Threshold N | **8** | **40** |
 | Expected false-positive rate (from 7d sample) | ~1 hour / week (JWT max was 10; ≥8 fired once) | Pages only the extreme hours of the known heavy free API-key probe (≥30 was 12 hours / 7d for that population) |
-| Catches pen-test shape? | Yes (10 routes / 15s) | N/A (that run used a free session principal) |
+| Catches pen-test shape? | Yes (ten distinct paths / 15s) | N/A (that run used a free session principal) |
 | Monitor enabled | **Yes — create after merge** | Same query, split by `auth_kind` |
 | Owner | `@koala73` | Reassign if security/ops ownership moves |
 | Channel | Axiom monitor → existing ops notification path | Link this runbook in the monitor description |
