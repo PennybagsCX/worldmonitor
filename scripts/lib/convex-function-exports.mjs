@@ -27,6 +27,11 @@ const FACTORY_RE =
 const SKIP_DIR_NAMES = new Set(['node_modules', '_generated', '__tests__']);
 
 /**
+ * Recursively yield Convex source files that can become backend modules.
+ *
+ * Skips `_generated`, `__tests__`, dotfiles, and multi-dot basenames that
+ * `convex deploy` never treats as entry points.
+ *
  * @param {string} dir
  * @yields {string}
  */

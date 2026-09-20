@@ -211,6 +211,10 @@ export function parseCommittedFilterList(text) {
 }
 
 /**
+ * Derive the expected internal probe patterns from convex/ and assert no
+ * public function name is covered.
+ *
+ * @param {string} [convexRoot]
  * @returns {string[]}
  */
 export function expectedInternalPatternsFromSource(convexRoot = CONVEX_ROOT) {
@@ -219,6 +223,12 @@ export function expectedInternalPatternsFromSource(convexRoot = CONVEX_ROOT) {
   return patterns;
 }
 
+/**
+ * Parse CLI flags for `--check` / `--write` / `--apply` / `--dry-run` / `--help`.
+ *
+ * @param {string[]} argv
+ * @returns {Record<string, boolean>}
+ */
 function parseCliArgs(argv) {
   const { values } = parseArgs({
     args: argv,
@@ -234,6 +244,11 @@ function parseCliArgs(argv) {
   return values;
 }
 
+/**
+ * Resolve a sntryu_ user token from the supported env vars.
+ *
+ * @returns {string}
+ */
 function resolveToken() {
   return (
     process.env.SENTRY_API_TOKEN
@@ -244,9 +259,12 @@ function resolveToken() {
 }
 
 /**
+ * GET project options from Sentry (includes `filters:error_messages`).
+ *
  * @param {string} token
  * @param {string} org
  * @param {string} project
+ * @returns {Promise<Record<string, unknown>>}
  */
 async function fetchProjectOptions(token, org, project) {
   const url = `${SENTRY_HOST}/api/0/projects/${org}/${project}/`;
@@ -268,10 +286,14 @@ async function fetchProjectOptions(token, org, project) {
 }
 
 /**
+ * PUT `filters:error_messages` on the Sentry project (merge-safe caller must
+ * pass the full newline-joined option string).
+ *
  * @param {string} token
  * @param {string} org
  * @param {string} project
  * @param {string} filtersText
+ * @returns {Promise<Record<string, unknown>>}
  */
 async function putErrorMessageFilters(token, org, project, filtersText) {
   const url = `${SENTRY_HOST}/api/0/projects/${org}/${project}/`;
@@ -300,6 +322,11 @@ async function putErrorMessageFilters(token, org, project, filtersText) {
   return /** @type {Record<string, unknown>} */ (await response.json());
 }
 
+/**
+ * Regenerate the committed internal probe filter list from source.
+ *
+ * @param {string[]} patterns
+ */
 function runWrite(patterns) {
   mkdirSync(dirname(COMMITTED_LIST_PATH), { recursive: true });
   writeFileSync(COMMITTED_LIST_PATH, formatCommittedFilterList(patterns), 'utf8');
@@ -309,6 +336,11 @@ function runWrite(patterns) {
   );
 }
 
+/**
+ * Fail when the committed filter list drifts from current convex/ internals.
+ *
+ * @param {string[]} patterns
+ */
 function runCheck(patterns) {
   let committedText;
   try {
@@ -354,6 +386,8 @@ function runCheck(patterns) {
 }
 
 /**
+ * Merge generated patterns into live Sentry filters, PUT, and read back.
+ *
  * @param {string[]} patterns
  * @param {{ dryRun: boolean }} opts
  */
@@ -443,12 +477,23 @@ async function runApply(patterns, opts) {
   );
 }
 
+/**
+ * Return `absPath` relative to the repo root when possible.
+ *
+ * @param {string} absPath
+ * @returns {string}
+ */
 function relativeToRepo(absPath) {
   return absPath.startsWith(`${REPO_ROOT}/`)
     ? absPath.slice(REPO_ROOT.length + 1)
     : absPath;
 }
 
+/**
+ * CLI entrypoint: default `--check`, or `--write` / `--apply`.
+ *
+ * @param {string[]} [argv]
+ */
 async function main(argv = process.argv.slice(2)) {
   const args = parseCliArgs(argv);
   if (args.help) {
