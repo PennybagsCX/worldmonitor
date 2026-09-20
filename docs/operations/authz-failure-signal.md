@@ -102,12 +102,18 @@ fan-out. That would be an alarm nobody trusts.
             failures = count(),
             reasons = make_set(reason),
             tiers = make_set(tier),
-            sample_routes = make_set(route, 20)
-            by principal_id, customer_id, auth_kind
+            sample_routes = make_set(route, 20),
+            customer_ids = make_set(customer_id)
+            by principal_id, auth_kind
 | where (auth_kind in ("clerk_jwt", "mcp_oauth") and distinct_routes >= 8)
      or (auth_kind in ("user_api_key", "enterprise_api_key", "widget_key") and distinct_routes >= 40)
 | order by distinct_routes desc
 ```
+
+Group by `principal_id` + `auth_kind` only. For `clerk_jwt`, `customer_id` is
+the active org when present else the user (`server/_shared/usage-identity.ts`),
+so including it in the group key can split one principal across rows and
+suppress the alert.
 
 ### Baseline re-measure (before changing N)
 
@@ -138,8 +144,9 @@ fan-out. That would be an alarm nobody trusts.
   and _time > ago(7d)
 | summarize distinct_routes = dcount(route),
             failures = count(),
-            sample_routes = make_set(route, 15)
-            by principal_id, customer_id, auth_kind, tier
+            sample_routes = make_set(route, 15),
+            customer_ids = make_set(customer_id)
+            by principal_id, auth_kind, tier
 | order by distinct_routes desc
 | take 30
 ```
@@ -170,7 +177,7 @@ make IP noisier than `principal_id`.
 ## Runbook — when it fires
 
 1. **Confirm shape.** Open the monitor series and the detection query for the
-   firing hour. Note `principal_id`, `customer_id`, `auth_kind`, `tier`,
+   firing hour. Note `principal_id`, `customer_ids`, `auth_kind`, `tier`,
    `distinct_routes`, and `sample_routes`.
 2. **Check for known exercise.** Authorized pen-tests, partner demos, and
    load tests produce this signature on purpose. Confirm with the owner before

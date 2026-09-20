@@ -34,7 +34,7 @@ Two event types in dataset `wm_api_usage`:
 | `req_bytes`, `res_bytes` |                                     | response counted only on 200/304 GET         |
 | `customer_id`      | Clerk user ID, org ID, enterprise slug, or static `widget` label | `null` only for anon                |
 | `principal_id`     | user ID or **hash** of API/widget key     | never the raw secret                         |
-| `auth_kind`        | `clerk_jwt` \| `user_api_key` \| `enterprise_api_key` \| `widget_key` \| `anon` | |
+| `auth_kind`        | `clerk_jwt` \| `user_api_key` \| `enterprise_api_key` \| `widget_key` \| `mcp_oauth` \| `anon` | MCP OAuth bearer (`api/mcp`) is distinct from dashboard `clerk_jwt` |
 | `tier`             | `0` free / `1` pro / `2` api / `3` enterprise | `0` if unknown                          |
 | `cache_tier`       | `fast` \| `medium` \| `slow` \| `slow-browser` \| `static` \| `daily` \| `no-store` | only on 200/304 |
 | `ip`                 | `"203.0.113.7"`                         | Cloudflare client IP only when the edge-proof header is valid; otherwise Vercel's peer IP |
@@ -321,15 +321,18 @@ decision, measured baseline, and operator runbook:
   and _time > ago(1h)
 | summarize distinct_routes = dcount(route),
             failures = count(),
-            sample_routes = make_set(route, 20)
-            by principal_id, customer_id, auth_kind
+            sample_routes = make_set(route, 20),
+            customer_ids = make_set(customer_id)
+            by principal_id, auth_kind
 | where (auth_kind in ("clerk_jwt", "mcp_oauth") and distinct_routes >= 8)
      or (auth_kind in ("user_api_key", "enterprise_api_key", "widget_key") and distinct_routes >= 40)
 | order by distinct_routes desc
 ```
 
-Anon traffic has `principal_id == null`; use the optional IP secondary query in
-the runbook if needed.
+Group by `principal_id` + `auth_kind` only — `customer_id` can be the Clerk org
+or the user for the same JWT principal, and grouping on it would split one
+identity across rows. Anon traffic has `principal_id == null`; use the optional
+IP secondary query in the runbook if needed.
 
 ### Upstream cost per customer (provider attribution)
 
