@@ -75,6 +75,22 @@ cp docker/redis-rest-proxy.mjs "$STAGE/redis-rest/"
   && npm init -y >/dev/null \
   && npm install redis@4 --no-audit --no-fund --ignore-scripts >/dev/null )
 
+# ── Seeders + AIS relay (self-hosted fork additions) ────────────────────────
+# Upstream populates the Redis-cached layers with a host-side cron of these
+# scripts (SELF_HOSTING.md); a self-hosted pup has no host cron, so ship them
+# inside the app tree with their runtime deps. scripts/package.json covers
+# both the seeders and the AIS relay (gated on AISSTREAM_API_KEY in the pup).
+mkdir -p "$STAGE/scripts"
+cp scripts/run-seeders.sh scripts/check-seed-freshness.mjs \
+   scripts/ais-relay.cjs scripts/notification-relay.cjs \
+   scripts/package.json scripts/package-lock.json "$STAGE/scripts/"
+cp scripts/seed-*.mjs scripts/_seed-*.mjs scripts/_bundle-runner.mjs "$STAGE/scripts/" 2>/dev/null || true
+[ -d scripts/lib ] && cp -R scripts/lib "$STAGE/scripts/lib"
+# seeders require shared JSON/data relative to the repo root
+cp -R shared "$STAGE/shared"
+echo "== installing scripts runtime deps =="
+( cd "$STAGE/scripts" && npm ci --omit=dev --omit=optional --ignore-scripts >/dev/null 2>&1 )
+
 # ── Gate: the raw handlers must resolve their runtime imports, or the API
 #    502s "missing dependency" at runtime (upstream-documented failure mode).
 ( cd "$STAGE/app" && node -e "require.resolve('@upstash/redis'); require.resolve('@upstash/ratelimit'); require.resolve('convex'); console.log('runtime deps resolve OK')" )

@@ -216,3 +216,17 @@ See our [Security Policy](./SECURITY.md) for responsible disclosure guidelines.
    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=koala73/worldmonitor&type=Date" />
  </picture>
 </a>
+
+
+---
+
+## DogeBox fork notices (PennybagsCX)
+
+This is a hard fork of [koala73/worldmonitor](https://github.com/koala73/worldmonitor), licensed under **AGPL-3.0** (unchanged). It exists to package WorldMonitor as a [DogeBox](https://github.com/Dogebox-WG) pup. Changes vs upstream live on the `dogebox` branch:
+
+1. **Web secret vault** (`src/services/runtime-config.ts`): upstream persists user-entered provider keys only to the desktop (Tauri) keychain and silently discards them on web. The fork stores them in a browser-local vault (`wm-web-vault` in localStorage) so self-hosted web installs can use their own keys. Values never leave the browser.
+2. **Client-direct BYO AI** (`src/services/summarization.ts`, `src/services/summarization-outcome.ts`): new `tryUserProvider()` step ahead of the server RPC chain — users' own Ollama / Groq / OpenRouter keys (from the vault) run AI briefs directly from the browser, falling back to the keyless browser-local model.
+3. **Self-host packaging** (`scripts/build-dist.sh`): reproduces the root Dockerfile's builder/runtime stages without Docker and stages the exact image layout plus `scripts/` (seeders + AIS relay with their runtime deps) and `shared/` into the release tarball the pup consumes.
+4. **Packaging tooling**: `.upstream-tag`, `scripts/sync-upstream.sh`, weekly `check-upstream.yml` workflow.
+
+Everything else is upstream code, unmodified. Per AGPL-3.0 §13, the source for every pup release is this repository at the corresponding `v<upstream>-wm<N>` tag.

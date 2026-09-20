@@ -1,0 +1,1 @@
+function d(e,n){if(n.length===0)return{followed:[],unfollowed:e};const l=new Set(n);if(l.size===0)return{followed:[],unfollowed:e};const t=e.filter(o=>l.has(o.code)),f=e.filter(o=>!l.has(o.code));return{followed:t,unfollowed:f}}function u(e){return e.followed.length>0&&e.unfollowed.length>0}export{d as p,u as s};

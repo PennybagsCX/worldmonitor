@@ -1,0 +1,1 @@
+function a(n,c,r){const s=[],t=new Map(c);for(const e of n){const o=c.get(e.code);o!==void 0&&!r&&Math.abs(e.score-o)>=10&&s.push({score:e,previousScore:o}),t.set(e.code,e.score)}return{changes:s,nextScores:t}}export{a as d};

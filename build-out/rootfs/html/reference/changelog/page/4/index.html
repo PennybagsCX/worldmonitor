@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>World Monitor Changelog Page 4 | World Monitor</title>
+    <meta name="description" content="Paginated release notes for World Monitor — new panels, data sources, API changes and fixes — built from the committed CHANGELOG.md so every release is crawlable.">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="https://www.worldmonitor.app/reference/changelog/page/4/">
+    <meta name="lastmod" content="2026-08-12">
+    <link rel="prev" href="https://www.worldmonitor.app/reference/changelog/page/3/">
+    <link rel="next" href="https://www.worldmonitor.app/reference/changelog/page/5/">
+    <meta property="og:type" content="article">
+    <meta property="og:title" content="World Monitor Changelog Page 4 | World Monitor">
+    <meta property="og:description" content="Paginated release notes for World Monitor — new panels, data sources, API changes and fixes — built from the committed CHANGELOG.md so every release is crawlable.">
+    <meta property="og:url" content="https://www.worldmonitor.app/reference/changelog/page/4/">
+    <meta property="og:site_name" content="World Monitor">
+    <meta property="og:image" content="https://www.worldmonitor.app/favico/og-image.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="World Monitor — real-time global intelligence dashboard with live markets, geopolitical data, and infrastructure monitoring">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="World Monitor Changelog Page 4 | World Monitor">
+    <meta name="twitter:description" content="Paginated release notes for World Monitor — new panels, data sources, API changes and fixes — built from the committed CHANGELOG.md so every release is crawlable.">
+    <meta name="twitter:image" content="https://www.worldmonitor.app/favico/og-image.png">
+    <meta name="twitter:image:alt" content="World Monitor — real-time global intelligence dashboard with live markets, geopolitical data, and infrastructure monitoring">
+    <meta name="twitter:site" content="@worldmonitorai">
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"CollectionPage","name":"World Monitor changelog","description":"Paginated release notes for World Monitor — new panels, data sources, API changes and fixes — built from the committed CHANGELOG.md so every release is crawlable.","url":"https://www.worldmonitor.app/reference/changelog/page/4/","inLanguage":"en-US","isPartOf":{"@type":"CreativeWorkSeries","name":"World Monitor release notes"}}</script>
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://www.worldmonitor.app/"},{"@type":"ListItem","position":2,"name":"Changelog","item":"https://www.worldmonitor.app/reference/changelog/"}]}</script>
+    <style>
+      :root { color-scheme: dark; --bg: #050807; --panel: #0c1210; --text: #eef8f0; --muted: #a8b8ad; --line: #1b2b22; --accent: #4ade80; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--text); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.55; }
+      a { color: var(--accent); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      header, main, footer { max-width: 960px; margin: 0 auto; padding: 0 20px; }
+      header { padding-top: 24px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+      nav { display: flex; gap: 4px 14px; flex-wrap: wrap; font-size: 14px; }
+      nav a { display: inline-flex; align-items: center; min-height: 44px; }
+      main { padding-top: 36px; padding-bottom: 52px; }
+      h1 { font-size: clamp(32px, 5vw, 54px); line-height: 1; margin: 0 0 16px; letter-spacing: 0; }
+      h2 { margin-top: 36px; font-size: 22px; }
+      p { color: var(--muted); }
+      .lede { font-size: 18px; max-width: 760px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-top: 24px; }
+      .card, .metric { border: 1px solid var(--line); border-radius: 8px; padding: 16px; background: var(--panel); }
+      .metric strong { display: block; font-size: 28px; color: var(--text); }
+      .metric small { display: block; color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+      .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em; font-size: 12px; font-weight: 700; }
+      .cta { display: inline-flex; align-items: center; gap: 8px; margin-top: 22px; padding: 13px 18px; border-radius: 8px; background: var(--accent); color: #04170c; font-weight: 700; font-size: 15px; }
+      .cta:hover { text-decoration: none; filter: brightness(1.08); }
+      .live-tool { margin-top: 28px; padding: 20px; border: 1px solid #28543a; border-radius: 12px; background: linear-gradient(145deg, #0e1712, #09100c); }
+      .live-tool h2 { margin: 3px 0 0; }
+      .live-tool .grid { margin-top: 18px; }
+      .tool-head, .tool-meta { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+      .tool-note { max-width: 760px; margin-bottom: 0; }
+      .tool-meta { margin-top: 16px; color: var(--muted); font-size: 13px; }
+      .live-status { padding: 5px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 12px; font-weight: 700; }
+      .live-tool[data-state="ready"] .live-status { border-color: #28543a; color: var(--accent); }
+      .live-tool[data-state="partial"] .live-status { border-color: #7c6322; color: #fde68a; }
+      .live-tool[data-state="error"] .live-status { border-color: #6f3b3b; color: #fca5a5; }
+      .refresh { border: 1px solid var(--line); border-radius: 7px; padding: 12px 14px; background: #121d16; color: var(--text); cursor: pointer; font: inherit; }
+      .refresh:hover:not(:disabled) { border-color: var(--accent); }
+      .refresh:disabled { cursor: wait; opacity: 0.55; }
+      .tool-controls { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
+      .tool-controls label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
+      .tool-controls select { min-width: 240px; border: 1px solid var(--line); border-radius: 7px; padding: 12px 34px 12px 12px; background: #121d16; color: var(--text); font: inherit; }
+      .result-list { list-style: none; padding: 0; margin: 16px 0 0; display: grid; gap: 8px; }
+      .result-list li { border-left: 2px solid var(--line); padding: 8px 12px; color: var(--muted); font-size: 14px; }
+      .split { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 18px; }
+      .split > section { border: 1px solid var(--line); border-radius: 8px; padding: 16px; background: var(--panel); }
+      .split h3 { margin: 0; font-size: 18px; }
+      .split .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .split .metric strong { font-size: 22px; }
+      .routes { list-style: none; padding: 0; margin: 20px 0 0; display: grid; gap: 8px; }
+      .routes li { border: 1px solid var(--line); border-radius: 8px; padding: 11px 14px; background: var(--panel); color: var(--text); font-size: 14px; }
+      .routes .vol { color: var(--muted); }
+      .domains { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+      .card.domain p { margin: 8px 0 12px; font-size: 14px; }
+      .card.domain .providers { display: flex; flex-wrap: wrap; gap: 6px; }
+      .card.domain .providers span { border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; color: var(--muted); font-size: 12px; }
+      .card.domain:hover { border-color: var(--accent); text-decoration: none; }
+      .related { list-style: none; padding: 0; margin: 12px 0 0; display: flex; flex-wrap: wrap; gap: 0 20px; }
+      .related a { display: inline-flex; align-items: center; min-height: 44px; }
+      .source { margin-top: 34px; font-size: 13px; color: var(--muted); }
+      table { border-collapse: collapse; width: 100%; margin-top: 16px; font-size: 14px; }
+      caption { caption-side: top; text-align: left; color: var(--muted); font-size: 13px; padding-bottom: 8px; }
+      th, td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; }
+      th { color: var(--muted); font-weight: 600; background: var(--panel); }
+      td data { color: var(--text); }
+      figure { margin: 20px 0 0; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+      figcaption { margin-top: 10px; color: var(--muted); font-size: 13px; }
+      blockquote { margin: 16px 0 0; padding: 12px 16px; border-left: 2px solid var(--accent); background: var(--panel); border-radius: 0 8px 8px 0; }
+      blockquote p { margin: 0; color: var(--text); font-size: 14px; }
+      footer { border-top: 1px solid var(--line); padding-top: 20px; padding-bottom: 28px; color: var(--muted); font-size: 13px; }
+
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav aria-label="Primary">
+        <a href="/">World Monitor</a>
+        <a href="/sources/">Sources</a>
+        <a href="/countries/">Countries</a>
+        <a href="/chokepoints/">Chokepoints</a>
+        <a href="/crises/">Crises</a>
+        <a href="/tools/">Live tools</a>
+        <a href="/research/">Research</a>
+        <a href="/reference/changelog/">Changelog</a>
+        <a href="/blog/glossary/">Glossary</a>
+      </nav>
+    </header>
+    <main>
+      <p class="eyebrow">Release notes</p>
+      <h1>World Monitor changelog</h1>
+      <p class="lede">Paginated release notes for World Monitor — new panels, data sources, API changes and fixes — built from the committed CHANGELOG.md so every release is crawlable.</p>
+      <article class="card">
+        <h2>2.5.20 <small>2026-02-27</small></h2>
+        <p>Added / Fixed / Performance</p>
+        <ul>
+          <li>Edge caching: Complete Cloudflare edge cache tier coverage with degraded-response policy (#484)</li>
+          <li>Edge caching: Cloudflare edge caching for proxy.worldmonitor.app (#478) and api.worldmonitor.app (#471)</li>
+          <li>Edge caching: Tiered edge Cache-Control aligned to upstream TTLs (#474)</li>
+          <li>API migration: Convert 52 API endpoints from POST to GET for edge caching (#468)</li>
+          <li>Gateway: Configurable VITE_WS_API_URL + harden POST-to-GET shim (#480)</li>
+          <li>Cache: Negative-result caching for cachedFetchJson (#466)</li>
+          <li>Security advisories: New panel with government travel alerts (#460)</li>
+          <li>Settings: Redesign settings window with VS Code-style sidebar layout (#461)</li>
+        </ul>
+      </article>
+      <article class="card">
+        <h2>2.5.10 <small>2026-02-26</small></h2>
+        <p>Fixed</p>
+        <ul>
+          <li>Yahoo Finance rate-limit UX: Show &quot;rate limited — retrying shortly&quot; instead of generic &quot;Failed to load&quot; on Markets, ETF, Commodities, and Sector panels when Yahoo returns 429 (#407)</li>
+          <li>Sequential Yahoo calls: Replace Promise.all with staggered batching in commodity quotes, ETF flows, and macro signals to prevent 429 rate limiting (#406)</li>
+          <li>Sector heatmap Yahoo fallback: Sector data now loads via Yahoo Finance when FINNHUB_API_KEY is missing (#406)</li>
+          <li>Finnhub-to-Yahoo fallback: Market quotes route Finnhub symbols through Yahoo when API key is not configured (#407)</li>
+          <li>ETF early-exit on rate limit: Skip retry loop and show rate-limit message immediately instead of waiting 60s (#407)</li>
+          <li>Sidecar auth resilience: 401-retry with token refresh for stale sidecar tokens after restart; diagFetch auth helper for settings window diagnostics (#407)</li>
+          <li>Verbose toggle persistence: Write verbose state to writable data directory instead of read-only app bundle on macOS (#407)</li>
+          <li>AI summary verbosity: Tighten prompts to 2 sentences / 60 words max with max_tokens reduced from 150 to 100 (#404)</li>
+        </ul>
+      </article>
+      <nav class="grid" aria-label="Changelog pagination">
+        <a class="card" href="/reference/changelog/page/3/">Previous page</a>
+        <a class="card" href="/reference/changelog/page/5/">Next page</a>
+      </nav>
+      <p class="source">Source: CHANGELOG.md. Page 4 of 14.</p>
+    </main>
+    <footer>World Monitor reference corpus. Crawlable pages use committed snapshots; live API results are labelled separately.</footer>
+    
+    
+  </body>
+</html>

@@ -11,7 +11,7 @@ import { mlWorker } from './ml-worker';
 import { getRpcBaseUrl, getRpcErrorStatusCode } from '@/services/rpc-client';
 import { SITE_VARIANT } from '@/config';
 import { BETA_MODE } from '@/config/beta';
-import { isFeatureAvailable, type RuntimeFeatureId } from './runtime-config';
+import { isFeatureAvailable, getSecretValue, type RuntimeFeatureId } from './runtime-config';
 import { trackLLMUsage, trackLLMFailure } from './analytics';
 import { getCurrentLanguage } from './i18n';
 import type { SummarizeArticleResponse } from '@/generated/client/worldmonitor/news/v1/service_client';
@@ -250,6 +250,120 @@ async function tryBrowserT5(
   }
 }
 
+// ── User-configured provider (self-hosted fork — bring your own keys) ──
+// Web deployments hold no server-side provider keys, so keys entered in
+// Settings → AI & Summarization (persisted to the browser's web vault) feed
+// a client-direct OpenAI-compatible call that runs AHEAD of the server RPC
+// chain. Keys never leave the user's browser; the user bears their own spend.
+
+interface UserProviderCandidate {
+  featureId: RuntimeFeatureId;
+  label: string;
+  url: string;
+  apiKey?: string;
+  model: string;
+  openRouterHeaders?: boolean;
+}
+
+function normalizeOpenAiUrl(raw: string): string {
+  const trimmed = raw.trim().replace(/\/+$/, '');
+  if (/\/chat\/completions$/.test(trimmed)) return trimmed;
+  if (/\/v1$/.test(trimmed)) return `${trimmed}/chat/completions`;
+  return `${trimmed}/v1/chat/completions`;
+}
+
+function getUserProviderCandidates(): UserProviderCandidate[] {
+  const candidates: UserProviderCandidate[] = [];
+
+  // User's own Ollama (or any OpenAI-compatible LAN server) — free, tried first
+  const ollamaUrl = getSecretValue('OLLAMA_API_URL');
+  const ollamaModel = getSecretValue('OLLAMA_MODEL');
+  if (ollamaUrl && ollamaModel) {
+    candidates.push({ featureId: 'aiOllama', label: 'Ollama', url: normalizeOpenAiUrl(ollamaUrl), model: ollamaModel });
+  }
+
+  const groqKey = getSecretValue('GROQ_API_KEY');
+  if (groqKey) {
+    candidates.push({
+      featureId: 'aiGroq', label: 'Groq', apiKey: groqKey,
+      url: 'https://api.groq.com/openai/v1/chat/completions',
+      model: 'llama-3.3-70b-versatile',
+    });
+  }
+
+  const openRouterKey = getSecretValue('OPENROUTER_API_KEY');
+  if (openRouterKey) {
+    candidates.push({
+      featureId: 'aiOpenRouter', label: 'OpenRouter', apiKey: openRouterKey,
+      url: 'https://openrouter.ai/api/v1/chat/completions',
+      model: 'openrouter/auto', openRouterHeaders: true,
+    });
+  }
+
+  return candidates.filter(c => isFeatureAvailable(c.featureId));
+}
+
+function buildUserProviderPrompt(
+  headlines: string[],
+  geoContext?: string,
+  lang?: string,
+  bodies?: string[],
+): string {
+  const lines = headlines.slice(0, 8).map((headline, i) => {
+    const body = typeof bodies?.[i] === 'string' ? bodies[i]!.slice(0, 200) : '';
+    return body ? `- ${headline} (Context: ${body})` : `- ${headline}`;
+  });
+  const parts = [
+    'You are a geopolitical intelligence analyst. Summarize these headlines into one concise intelligence brief of 2-4 sentences. Lead with the most significant development.',
+    geoContext ? `Geopolitical context: ${geoContext}` : '',
+    'Headlines:',
+    ...lines,
+    lang && lang !== 'en' ? `Write the brief in language code "${lang}".` : '',
+  ];
+  return parts.filter(Boolean).join('\n');
+}
+
+async function tryUserProvider(
+  attemptState: SummarizationAttemptState,
+  headlines: string[],
+  geoContext?: string,
+  lang?: string,
+  bodies?: string[],
+): Promise<SummarizationResult | null> {
+  for (const candidate of getUserProviderCandidates()) {
+    try {
+      markSummarizationAttempt(attemptState, 'user-direct');
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (candidate.apiKey) headers.Authorization = `Bearer ${candidate.apiKey}`;
+      if (candidate.openRouterHeaders && typeof location !== 'undefined') {
+        // OpenRouter's documented browser-app attribution headers (harmless elsewhere)
+        headers['HTTP-Referer'] = location.origin;
+        headers['X-Title'] = 'World Monitor (self-hosted)';
+      }
+      const resp = await fetch(candidate.url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: candidate.model,
+          temperature: 0.3,
+          messages: [
+            { role: 'system', content: 'You are a geopolitical intelligence analyst. Be precise and concise.' },
+            { role: 'user', content: buildUserProviderPrompt(headlines, geoContext, lang, bodies) },
+          ],
+        }),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json() as { choices?: Array<{ message?: { content?: string } }> };
+      const summary = (data.choices?.[0]?.message?.content ?? '').trim();
+      if (!summary) continue;
+      return { summary, provider: 'user-direct', model: candidate.model, cached: false };
+    } catch (error) {
+      console.warn(`[Summarization] ${candidate.label} (your own key) failed:`, error);
+    }
+  }
+  return null;
+}
+
 // ── Fallback chain runner ──
 
 async function runApiChain(
@@ -272,7 +386,9 @@ async function runApiChain(
 }
 
 /**
- * Generate a summary using the fallback chain: Ollama -> Groq -> OpenRouter -> Browser T5
+ * Generate a summary using the fallback chain: user's own provider (web vault
+ * keys; self-hosted fork) -> Ollama -> Groq -> OpenRouter (server RPC, needs
+ * server-side keys) -> Browser T5
  * Server-side Redis caching is handled by the SummarizeArticle RPC handler.
  *
  * @param geoContext Optional geographic signal context to include in the prompt
@@ -389,12 +505,18 @@ async function generateSummaryInternal(
     return null;
   }
 
-  // Normal mode: API chain -> Browser T5
-  const totalSteps = API_PROVIDERS.length + 1;
+  // Normal mode: User BYO provider -> API chain -> Browser T5
+  const totalSteps = API_PROVIDERS.length + 2;
   let chainResult: SummarizationResult | null = null;
 
   if (!options?.skipCloudProviders) {
-    chainResult = await runApiChain(API_PROVIDERS, attemptState, headlines, geoContext, lang, onProgress, 1, totalSteps, bodies);
+    onProgress?.(1, totalSteps, 'Connecting to your AI provider...');
+    chainResult = await tryUserProvider(attemptState, headlines, geoContext, lang, bodies);
+  }
+  if (chainResult) return chainResult;
+
+  if (!options?.skipCloudProviders) {
+    chainResult = await runApiChain(API_PROVIDERS, attemptState, headlines, geoContext, lang, onProgress, 2, totalSteps, bodies);
   }
   if (chainResult) return chainResult;
 

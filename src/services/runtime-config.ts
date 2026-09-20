@@ -68,9 +68,11 @@ export interface RuntimeFeatureDefinition {
 
 export interface RuntimeSecretState {
   /** Values are retained only for browser environment variables. Desktop vault
-   * entries intentionally expose presence/status without returning plaintext. */
+   * entries intentionally expose presence/status without returning plaintext.
+   * 'web-vault' entries (self-hosted fork) keep the user's own key in this
+   * browser's localStorage so self-hosted features can use it directly. */
   value?: string;
-  source: 'env' | 'vault';
+  source: 'env' | 'vault' | 'web-vault';
 }
 
 export interface RuntimeConfig {
@@ -79,6 +81,27 @@ export interface RuntimeConfig {
 }
 
 const TOGGLES_STORAGE_KEY = 'worldmonitor-runtime-feature-toggles';
+/** Self-hosted fork: browser-side secret vault. Upstream persists user-entered
+ *  secrets only to the desktop (Tauri) keychain; on web the settings write was
+ *  silently discarded, which left self-hosted installs with no way to supply
+ *  their own provider keys. The web vault keeps values in localStorage — they
+ *  never leave the user's browser. */
+const WEB_VAULT_STORAGE_KEY = 'wm-web-vault';
+
+function readWebVault(): Partial<Record<RuntimeSecretKey, string>> {
+  try {
+    const raw = localStorage.getItem(WEB_VAULT_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Partial<Record<RuntimeSecretKey, string>>;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch { /* malformed JSON or storage unavailable */ return {}; }
+}
+
+function writeWebVault(vault: Partial<Record<RuntimeSecretKey, string>>): void {
+  try {
+    localStorage.setItem(WEB_VAULT_STORAGE_KEY, JSON.stringify(vault));
+  } catch { /* quota or private browsing */ }
+}
 
 const defaultToggles: Record<RuntimeFeatureId, boolean> = {
   aiGroq: true,
@@ -382,6 +405,15 @@ function seedSecretsFromEnvironment(): void {
       runtimeConfig.secrets[key] = { value, source: 'env' };
     }
   }
+
+  // Self-hosted fork: restore the user's own keys from the web vault after
+  // the build-time env seeding (vault wins — it is the user's explicit entry).
+  const vault = readWebVault();
+  for (const [key, value] of Object.entries(vault)) {
+    if (value) {
+      runtimeConfig.secrets[key as RuntimeSecretKey] = { value, source: 'web-vault' };
+    }
+  }
 }
 
 seedSecretsFromEnvironment();
@@ -418,14 +450,26 @@ export function isFeatureEnabled(featureId: RuntimeFeatureId): boolean {
   return runtimeConfig.featureToggles[featureId] !== false;
 }
 
-export function getSecretState(key: RuntimeSecretKey): { present: boolean; valid: boolean; source: 'env' | 'vault' | 'missing' } {
+export function getSecretState(key: RuntimeSecretKey): { present: boolean; valid: boolean; source: 'env' | 'vault' | 'web-vault' | 'missing' } {
   const state = runtimeConfig.secrets[key];
   if (!state) return { present: false, valid: false, source: 'missing' };
   return {
     present: true,
-    valid: state.source === 'vault' || validateSecret(key, state.value ?? '').valid,
+    valid: state.source === 'vault' || state.source === 'web-vault' || validateSecret(key, state.value ?? '').valid,
     source: state.source,
   };
+}
+
+/**
+ * Plaintext accessor for features that consume the user's own keys directly
+ * in the browser (self-hosted fork: client-direct AI summarization).
+ * Desktop keychain entries stay opaque by design; 'web-vault' and build-time
+ * 'env' values are returned.
+ */
+export function getSecretValue(key: RuntimeSecretKey): string | null {
+  const state = runtimeConfig.secrets[key];
+  if (!state || state.source === 'vault') return null;
+  return state.value ?? readWebVault()[key] ?? null;
 }
 
 export function isFeatureAvailable(featureId: RuntimeFeatureId): boolean {
@@ -455,7 +499,22 @@ export function setFeatureToggle(featureId: RuntimeFeatureId, enabled: boolean):
 
 export async function setSecretValue(key: RuntimeSecretKey, value: string): Promise<void> {
   if (!isDesktopRuntime()) {
-    console.warn('[runtime-config] Ignoring secret write outside desktop runtime');
+    // Self-hosted fork: persist to the browser's web vault instead of
+    // discarding the write. The value stays on this device.
+    const sanitized = value.trim();
+    const vault = readWebVault();
+    if (sanitized) {
+      vault[key] = sanitized;
+      runtimeConfig.secrets[key] = { value: sanitized, source: 'web-vault' };
+    } else {
+      delete vault[key];
+      delete runtimeConfig.secrets[key];
+    }
+    writeWebVault(vault);
+    try {
+      localStorage.setItem('wm-secrets-updated', String(Date.now()));
+    } catch { /* localStorage may be unavailable */ }
+    notifyConfigChanged();
     return;
   }
 
