@@ -1,0 +1,35 @@
+name: check-upstream
+
+# Weekly watcher: koala73/worldmonitor moves fast and tags irregularly.
+# If a newer upstream release exists than the one this fork's pup pin tracks,
+# open (or refresh) an issue — rebasing is deliberately human work.
+
+on:
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare upstream latest release with .upstream-tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          UP=$(gh api repos/koala73/worldmonitor/releases/latest --jq .tag_name)
+          KNOWN=$(cat .upstream-tag 2>/dev/null || echo none)
+          echo "upstream=$UP known=$KNOWN"
+          [ "$UP" = "$KNOWN" ] && exit 0
+          EXISTING=$(gh issue list --state open --search "Upstream WorldMonitor $UP in:title" --json number --jq 'length')
+          if [ "$EXISTING" -eq 0 ]; then
+            gh issue create \
+              --title "Upstream WorldMonitor $UP available (pup pins $KNOWN)" \
+              --body "Rebase the \`dogebox\` branch onto \`$UP\` (\`git fetch upstream && git rebase $UP\`), resolve conflicts in the BYO-AI patch, rebuild via \`scripts/build-dist.sh\`, cut a new \`-wm<N>\` release, then bump the pup manifest and tag. See pup repo README 'Releases / development'."
+          fi
