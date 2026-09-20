@@ -852,6 +852,8 @@ export async function fetchAndParseRss(
   // lack it, so zero-item entries could not be classified between
   // negative-cache and fresh-failure; force a cold parse on rollout.
   // v9→v10 (#7748): retain a bounded country headline pool beyond entry five.
+  // v10→v11 (#8398): items gained the publisher-link ingest gate. Warm v10
+  // rows carry un-gated links, so force a cold parse to gate every link.
   const cacheKey = rssFeedCacheKey(variant, feed.url);
 
   try {

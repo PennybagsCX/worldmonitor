@@ -50,6 +50,44 @@ describe('publisher-link relay gate (#8398)', () => {
         `relay table entry for '${family}' matches the shared table`,
       );
     }
+    // Reverse direction: every shared-table family must exist in the relay
+    // table, or the relay fails closed on a publisher ingest allows.
+    for (const family of Object.keys(sharedTable)) {
+      assert.ok(
+        family in PUBLISHER_LINK_DOMAINS,
+        `shared table family '${family}' missing from the relay table — relay would blank its links`,
+      );
+    }
+  });
+
+  it('resolves every domain-backed family label to its family (label-drift guard)', () => {
+    // The relay gate resolves feed LABELS, not family ids. A new label for
+    // a domain-backed family that lands in PUBLISHER_FAMILY_DATA but not in
+    // the relay's PUBLISHER_LINK_LABELS would fail closed (blank link) while
+    // ingest allows it — a silent divergence. Parse both tables from the
+    // shared source and require full label coverage.
+    const relay = require('../scripts/lib/publisher-link-relay-gate.cjs');
+    const src = readFileSync(new URL('../shared/publisher-families.js', import.meta.url), 'utf8');
+    const dataMatch = src.match(/const PUBLISHER_FAMILY_DATA = \{([\s\S]*?)\n\};/);
+    assert.ok(dataMatch, 'curated family data found in shared/publisher-families.js');
+    // Simpler: extract family ids that have a domain-table entry.
+    const tableMatch = src.match(/const PUBLISHER_FAMILY_DOMAINS = Object\.freeze\(\{([\s\S]*?)\n\}\);/);
+    const familiesWithDomains = new Set(
+      [...tableMatch[1].matchAll(/'([^']+)': \[/g)].map(([, f]) => f),
+    );
+    const labelEntries = [...dataMatch[1].matchAll(/'([^']+)': \{ publisher: "[^"]*", labels: \[([^\]]*)\]/g)];
+    const missing = [];
+    for (const [, family, labelsRaw] of labelEntries) {
+      if (!familiesWithDomains.has(family)) continue;
+      const labels = [...labelsRaw.matchAll(/"([^"]+)"/g)].map(([, l]) => l);
+      for (const label of labels) {
+        const resolved = relay.familyForLabel(label);
+        if (resolved !== family) {
+          missing.push(`"${label}" resolves to "${resolved}", expected "${family}"`);
+        }
+      }
+    }
+    assert.deepEqual(missing, []);
   });
 
   it('matches the shared predicate on sampled cases', async () => {

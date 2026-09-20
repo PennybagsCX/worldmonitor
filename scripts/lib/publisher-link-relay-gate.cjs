@@ -66,6 +66,10 @@ const PUBLISHER_LINK_DOMAINS = {
   'the-verge': ['theverge.com'],
   'venturebeat': ['venturebeat.com'],
   'white-house': ['whitehouse.gov'],
+  // #8398: Dow Jones delivery host (feeds.content.dowjones.io) serves the
+  // feed, but item links point at the publisher apex (wsj.com). Mirrors the
+  // domain-only 'wsj' family in shared/publisher-families.js.
+  'wsj': ['wsj.com'],
 };
 
 function normalizeLinkHostname(hostname) {
@@ -248,6 +252,11 @@ const PUBLISHER_LINK_LABELS = {
   "y combinator": "y-combinator",
   "yahoo finance": "yahoo-finance",
   "yahoo finance commodities": "yahoo-finance",
+  // #8398: publisher-name index for the domain-only 'wsj' family (mirrors
+  // the #6430 publisher-name indexing in shared/publisher-families.js).
+  // The bare feed label "Wall Street Journal" intentionally stays a
+  // singleton — only the publisher NAME resolves here.
+  "wall street journal": "wsj",
 };
 
 /**
@@ -296,7 +305,9 @@ function gateRelayStoryLink(link, familyOrLabel) {
 
 module.exports = {
   gateRelayStoryLink,
+  familyForLabel,
   PUBLISHER_LINK_DOMAINS,
+  PUBLISHER_LINK_LABELS,
   // Exposed for unit tests (contract parity with shared/publisher-link-gate.js).
   normalizeLinkHostname,
   linkHostname,

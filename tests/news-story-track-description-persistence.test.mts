@@ -526,10 +526,11 @@ describe('fetchAndParseRss — cache prefix invalidation contract', () => {
       'utf-8',
     );
     // v9→v10: warm v9 rows retain only the first five RSS entries.
+    // v10→v11 (#8398): warm v10 rows carry un-gated links.
     assert.equal(
       rssFeedCacheKey('full', 'https://example.com/rss'),
-      'rss:feed:v10:full:https://example.com/rss',
-      'rss:feed cache key must invalidate the five-entry country pool',
+      'rss:feed:v11:full:https://example.com/rss',
+      'rss:feed cache key must invalidate un-gated pre-#8398 entries',
     );
     assert.ok(
       src.includes('const cacheKey = rssFeedCacheKey(variant, feed.url);'),

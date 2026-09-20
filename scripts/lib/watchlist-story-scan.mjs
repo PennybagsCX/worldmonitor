@@ -131,7 +131,16 @@ export async function scanAndEnqueueWatchlistStoryEvents(nowMs, {
       );
       for (let i = 0; i < candidates.length; i++) {
         const arr = srcResults[i]?.result;
-        if (Array.isArray(arr) && typeof arr[0] === 'string') candidates[i].source = arr[0];
+        if (!Array.isArray(arr)) continue;
+        const members = arr.filter((m) => typeof m === 'string' && m.length > 0);
+        if (members.length === 0) continue;
+        // #8398 review: story:sources:v1 is a SET over every feed label that
+        // mentioned the story — a merged cluster carries several publishers,
+        // and SMEMBERS order is undefined. Prefer the member that authorizes
+        // the persisted link so a corroborated story keeps its link; fall
+        // back to the first member for payload.source.
+        candidates[i].source =
+          members.find((m) => gateRelayStoryLink(candidates[i].link, m) !== '') ?? members[0];
       }
     } catch { /* best-effort — unresolved sources fail closed at the builder */ }
 
