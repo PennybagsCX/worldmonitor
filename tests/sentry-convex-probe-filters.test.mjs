@@ -56,6 +56,37 @@ describe('convex-function-exports enumerator', () => {
     }
   });
 
+  it('keeps typed exports whose type annotations contain semicolons', () => {
+    const root = mkdtempSync(join(tmpdir(), 'convex-typed-exports-'));
+    try {
+      writeFileSync(
+        join(root, 'typed.ts'),
+        [
+          'type Payload = { a: string; b: number };',
+          'export const typedInternal: import("./_generated/server").InternalQuery<',
+          '  { args: { id: string }; returns: Payload | null },',
+          '  Payload | null',
+          '> = internalQuery({',
+          '  args: {},',
+          '  handler: async (): Promise<Payload | null> => null,',
+          '});',
+          'export const typedPublic: QueryGeneric<{ x: string; y: number }> = query({',
+          '  args: {},',
+          '  handler: async () => ({ x: "a", y: 1 }),',
+          '});',
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+
+      const exports = listConvexFunctionExports(join(root, 'typed.ts'));
+      assert.equal(exports.get('typedInternal'), 'internalQuery');
+      assert.equal(exports.get('typedPublic'), 'query');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('enumerates real convex/ internals and publics as disjoint sets', () => {
     const internals = listInternalConvexFunctionExports(REPO_CONVEX);
     const publics = listPublicConvexFunctionExports(REPO_CONVEX);

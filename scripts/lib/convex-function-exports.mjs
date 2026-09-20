@@ -61,6 +61,130 @@ export function moduleRefForConvexFile(convexRoot, filePath) {
 }
 
 /**
+ * Report whether `fromExport` is exactly one `export const NAME` binding whose
+ * initializer starts at the trailing factory call (the factory name itself is
+ * outside this slice).
+ *
+ * Semicolons inside type annotations (`{ a: string; b: number }`) must not
+ * reject the binding — only a top-level statement terminator before `=` does.
+ *
+ * @param {string} fromExport
+ * @returns {boolean}
+ */
+export function isExportConstBoundToTrailingFactory(fromExport) {
+  const header = /^export\s+const\s+(\w+)/.exec(fromExport);
+  if (!header) return false;
+  if ((fromExport.match(/export\s+const\s+/g) || []).length !== 1) return false;
+
+  let i = header[0].length;
+  const source = fromExport;
+
+  const skipWs = () => {
+    while (i < source.length && /\s/.test(source[i])) i += 1;
+  };
+
+  /**
+   * Advance from the first character of a type annotation to the binding `=`,
+   * or return false if a top-level `;` ends the statement first.
+   */
+  const seekBindingEqualsThroughType = () => {
+    let angle = 0;
+    let paren = 0;
+    let brace = 0;
+    let bracket = 0;
+    /** @type {null | "'" | '"' | '`'} */
+    let quote = null;
+
+    while (i < source.length) {
+      const ch = source[i];
+      if (quote !== null) {
+        if (ch === '\\' && i + 1 < source.length) {
+          i += 2;
+          continue;
+        }
+        if (ch === quote) quote = null;
+        i += 1;
+        continue;
+      }
+      if (ch === "'" || ch === '"' || ch === '`') {
+        quote = ch;
+        i += 1;
+        continue;
+      }
+      if (ch === '<') {
+        angle += 1;
+        i += 1;
+        continue;
+      }
+      if (ch === '>') {
+        angle = Math.max(0, angle - 1);
+        i += 1;
+        continue;
+      }
+      if (ch === '(') {
+        paren += 1;
+        i += 1;
+        continue;
+      }
+      if (ch === ')') {
+        paren = Math.max(0, paren - 1);
+        i += 1;
+        continue;
+      }
+      if (ch === '{') {
+        brace += 1;
+        i += 1;
+        continue;
+      }
+      if (ch === '}') {
+        brace = Math.max(0, brace - 1);
+        i += 1;
+        continue;
+      }
+      if (ch === '[') {
+        bracket += 1;
+        i += 1;
+        continue;
+      }
+      if (ch === ']') {
+        bracket = Math.max(0, bracket - 1);
+        i += 1;
+        continue;
+      }
+
+      const atTopLevel = angle === 0 && paren === 0 && brace === 0 && bracket === 0;
+      if (atTopLevel && ch === ';' ) return false;
+      if (atTopLevel && ch === '=') {
+        // `=>` is part of a type (function type), not the binding equals.
+        if (source[i + 1] === '>') {
+          i += 2;
+          continue;
+        }
+        return true;
+      }
+      i += 1;
+    }
+    return false;
+  };
+
+  skipWs();
+  if (source[i] === ':') {
+    i += 1;
+    if (!seekBindingEqualsThroughType()) return false;
+  } else {
+    skipWs();
+    if (source[i] !== '=') return false;
+  }
+
+  // `i` is on the binding `=`.
+  if (source[i] !== '=') return false;
+  i += 1;
+  skipWs();
+  // Nothing may sit between the binding equals and the factory call site.
+  return i === source.length;
+}
+
+/**
  * List every Convex function export in one source file.
  *
  * @param {string} filePath
@@ -79,13 +203,7 @@ export function listConvexFunctionExports(filePath) {
     if (exportMatches.length === 0) continue;
     const last = exportMatches[exportMatches.length - 1];
     const fromExport = window.slice(last.index);
-    // A completed prior statement between the export and the factory means
-    // this factory belongs to a different binding.
-    if (/;/.test(fromExport)) continue;
-    if ((fromExport.match(/export\s+const\s+/g) || []).length !== 1) continue;
-    const eq = fromExport.lastIndexOf('=');
-    if (eq < 0) continue;
-    if (fromExport.slice(eq + 1).trim() !== '') continue;
+    if (!isExportConstBoundToTrailingFactory(fromExport)) continue;
     exports.set(last[1], factory);
   }
   return exports;
