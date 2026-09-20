@@ -391,6 +391,31 @@ describe('api/mcp — usage telemetry (#4866)', () => {
     assert.equal(events[0].tool_name, null);
   });
 
+  it('unknown JSON-RPC method collapses to _unregistered (#8403 cardinality)', async () => {
+    const { deps } = makeProDeps();
+    const events = captureAxiom();
+    const { ctx, settle } = makeCtx();
+    const res = await mcpHandler(
+      new Request(BASE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 99,
+          method: `invented.method.${'x'.repeat(200)}`,
+          params: {},
+        }),
+      }),
+      deps,
+      ctx,
+    );
+    assert.ok(res.status === 200 || res.status >= 400);
+    await settle();
+    assert.equal(events.length, 1);
+    assert.equal(events[0].rpc_method, '_unregistered');
+    assert.equal(events[0].tool_name, null);
+  });
+
   it('response without Content-Length does not record res_bytes: 0 (#8403)', async () => {
     const { emitMcpRequestEvent, createMcpUsage } = await import('../api/mcp/usage.ts');
     const events = [];

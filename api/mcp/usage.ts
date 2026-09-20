@@ -51,6 +51,30 @@ const REGISTERED_TOOL_NAMES: ReadonlySet<string> = new Set(
   TOOL_REGISTRY.map((tool) => tool.name),
 );
 
+/**
+ * JSON-RPC methods this transport serves — cardinality bound for rpc_method
+ * (#8403 / Strix). Anything else collapses to `_unregistered` so client-minted
+ * strings cannot inflate the Axiom dimension.
+ */
+const SERVED_RPC_METHODS: ReadonlySet<string> = new Set([
+  'initialize',
+  'notifications/initialized',
+  'ping',
+  'tools/list',
+  'tools/call',
+  'prompts/list',
+  'prompts/get',
+  'skills/list',
+  'skills/get',
+  'resources/list',
+  'resources/templates/list',
+  'resources/read',
+  'logging/setLevel',
+]);
+
+/** Fixed bucket for methods outside SERVED_RPC_METHODS — one cardinality slot. */
+const UNREGISTERED_RPC_METHOD = '_unregistered';
+
 export interface McpUsage {
   phase: McpPhase;
   authKind: AuthKind;
@@ -58,7 +82,7 @@ export interface McpUsage {
   principalId: string | null;
   /** Set true for surfaces that must not emit (OPTIONS/HEAD, manifest GET). */
   skip: boolean;
-  /** Parsed JSON-RPC method when the body was readable; null otherwise (#8403). */
+  /** Served JSON-RPC method, or `_unregistered` / null (#8403 cardinality). */
   rpcMethod: string | null;
   /** tools/call name when it matches TOOL_REGISTRY; never raw client input (#8403). */
   toolName: string | null;
@@ -81,14 +105,17 @@ export function createMcpUsage(): McpUsage {
  * name) on the usage accumulator. Call once the envelope has been parsed —
  * before auth branches that may return early — so Axiom can distinguish
  * initialize / tools/list / tools/call without joining anything (#8403).
+ *
+ * Both fields are cardinality-bounded: methods outside SERVED_RPC_METHODS map
+ * to `_unregistered`; tool names outside TOOL_REGISTRY stay null.
  */
 export function setUsageRpc(
   usage: McpUsage,
   method: string,
   toolCallName?: unknown,
 ): void {
-  usage.rpcMethod = method;
-  if (method !== 'tools/call') {
+  usage.rpcMethod = SERVED_RPC_METHODS.has(method) ? method : UNREGISTERED_RPC_METHOD;
+  if (usage.rpcMethod !== 'tools/call') {
     usage.toolName = null;
     return;
   }
