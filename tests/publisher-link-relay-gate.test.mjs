@@ -90,6 +90,17 @@ describe('publisher-link relay gate (#8398)', () => {
     assert.deepEqual(missing, []);
   });
 
+  it('keeps a WSJ link for the Dow Jones delivery-host feed label (#8398 review)', () => {
+    // The WSJ feed URL is feeds.content.dowjones.io but item links point at
+    // wsj.com. The relay only sees the feed label, so the publisher-name
+    // index must resolve it to the domain-only 'wsj' family.
+    assert.equal(
+      gateRelayStoryLink('https://www.wsj.com/articles/markets-rally', 'Wall Street Journal'),
+      'https://www.wsj.com/articles/markets-rally',
+    );
+    assert.equal(gateRelayStoryLink('https://evil.example/phish', 'Wall Street Journal'), '');
+  });
+
   it('matches the shared predicate on sampled cases', async () => {
     const shared = await import('../shared/publisher-link-gate.js');
     const cases = [

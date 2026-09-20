@@ -304,6 +304,20 @@ describe('buildStoryTrackHsetFields — story:track:v1 HSET contract', () => {
     assert.strictEqual(fieldsToMap(buildStoryTrackHsetFields(item, '1745000000001', 99)).get('link'), '');
   });
 
+  it('persists a WSJ link via the publisher-name index (#8398 review)', () => {
+    // The item-scoped persist gate has no feed URL, so the Dow Jones
+    // delivery host leg is unavailable — the publisher-name index
+    // ("Wall Street Journal" -> 'wsj' family -> wsj.com) carries it.
+    const item = baseItem({
+      source: 'Wall Street Journal',
+      link: 'https://www.wsj.com/articles/x-123',
+    });
+    assert.strictEqual(
+      fieldsToMap(buildStoryTrackHsetFields(item, '1745000000001', 99)).get('link'),
+      'https://www.wsj.com/articles/x-123',
+    );
+  });
+
   it('preserves all other canonical fields (lastSeen, currentScore, title, link, severity, lang)', () => {
     const item = baseItem({
       description: 'A body that passes the length gate and will be persisted to Redis.',

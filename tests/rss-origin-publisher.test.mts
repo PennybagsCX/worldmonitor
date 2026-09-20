@@ -125,6 +125,22 @@ describe('parseRssXml publisher-link gate (#8398)', () => {
     assert.equal(parsed.items[0]!.link, 'https://feeds.npr.org/story/x');
   });
 
+  it('keeps a WSJ digest link on the publisher apex, not the delivery host (#8398 review)', () => {
+    // The WSJ feed URL is a Dow Jones delivery host
+    // (feeds.content.dowjones.io) but item links point at wsj.com. The
+    // feed-host leg alone would blank every WSJ link; the domain-only
+    // 'wsj' family carries the apex allowance.
+    const wsj = { url: 'https://feeds.content.dowjones.io/public/rss/RSSUSnews', name: 'Wall Street Journal', lang: 'en' };
+    const xml = rss(`<item>
+      <title>Markets rally on trade optimism</title>
+      <link>https://www.wsj.com/articles/markets-rally-x</link>
+      <pubDate>Tue, 07 Jul 2026 12:00:00 GMT</pubDate>
+    </item>`);
+    const parsed = parseRssXml(xml, wsj, 'full');
+    assert.ok(parsed && parsed.items.length === 1);
+    assert.equal(parsed.items[0]!.link, 'https://www.wsj.com/articles/markets-rally-x');
+  });
+
   it('drops a country-pool item whose link leaves its publisher domain', () => {
     // Six same-host items: five fill the digest window, the sixth lands in
     // the country pool, then the hostile seventh is dropped by the
