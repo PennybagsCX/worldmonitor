@@ -252,9 +252,20 @@ function edgeProofRequiredResponse(corsHeaders: Record<string, string>): Respons
     headers: {
       'Content-Type': 'application/json',
       'X-RateLimit-Mode': 'edge-proof',
+      'Cache-Control': 'no-store',
       ...corsHeaders,
     },
   });
+}
+
+/** Reject unproven Cloudflare IPs before an IP-scoped budget or Redis fallback. */
+export function checkIpScopedEdgeProof(request: Request, corsHeaders: Record<string, string>): Response | null {
+  if (!hasUnprovenCloudflareClientIp(request)) return null;
+  reportEdgeProofRequiredOnce(
+    'ip-scoped:edge-proof',
+    new Error('Cloudflare client IP arrived without a valid x-wm-edge-proof'),
+  );
+  return edgeProofRequiredResponse(corsHeaders);
 }
 
 export interface RateLimitOptions {
@@ -305,6 +316,8 @@ function getPrincipalRateLimitIdentifier(
 }
 
 export async function checkRateLimit(request: Request, corsHeaders: Record<string, string>, opts: RateLimitOptions = {}): Promise<Response | null> {
+  const proofDenied = !opts.principalUserId && checkIpScopedEdgeProof(request, corsHeaders);
+  if (proofDenied) return proofDenied;
   const rl = getRatelimit();
   if (!rl) {
     if (opts.failClosed) {
@@ -876,13 +889,8 @@ export async function checkEndpointRateLimit(request: Request, pathname: string,
   // isolate; logging every rejection would amplify under spoofed headers.
   // Run before the Redis availability gate so a missing Upstash config cannot
   // re-admit unproven CF client IPs under fail-open callers.
-  if (!opts.principalUserId && hasUnprovenCloudflareClientIp(request)) {
-    reportEdgeProofRequiredOnce(
-      `checkEndpointRateLimit:${pathname}:edge-proof`,
-      new Error('Cloudflare client IP arrived without a valid x-wm-edge-proof'),
-    );
-    return edgeProofRequiredResponse(corsHeaders);
-  }
+  const proofDenied = !opts.principalUserId && checkIpScopedEdgeProof(request, corsHeaders);
+  if (proofDenied) return proofDenied;
 
   const rl = getEndpointRatelimit(pathname);
   if (!rl) {
@@ -1042,6 +1050,8 @@ export async function checkFailClosedScopedIpRateLimit(
   window: Duration,
   corsHeaders: Record<string, string>,
 ): Promise<Response | null> {
+  const proofDenied = checkIpScopedEdgeProof(request, corsHeaders);
+  if (proofDenied) return proofDenied;
   const result = await checkScopedRateLimit(scope, limit, window, getClientIp(request));
   if (result.degraded) return rateLimitDegradedResponse(corsHeaders);
   if (!result.allowed) {

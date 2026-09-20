@@ -17,7 +17,7 @@
  *
  * Rules → Transform Rules → Modify Request Header → custom filter expression:
  *
- *   (http.request.uri.path matches "^/(api|mcp|ask|oauth|a2a)(/|$)")
+ *   (http.request.uri.path matches "^/(api|mcp|ask|oauth|a2a|docs/mcp)(/|$)")
  *
  * Set static header `x-wm-edge-proof` to the same secret stored in Vercel as
  * `CF_EDGE_PROOF_SECRET`. Confirm Preview and Production both have the secret.
@@ -44,6 +44,7 @@ export const EDGE_PROOF_PATH_ALTERNATIVES = Object.freeze([
   'ask',
   'oauth',
   'a2a',
+  'docs/mcp',
 ]);
 
 /** Regex source pasted into Cloudflare's `matches` operator (anchors included). */
@@ -63,6 +64,7 @@ export const EDGE_PROOF_PATH_PREFIXES = Object.freeze([
   '/ask',
   '/oauth/',
   '/a2a',
+  '/docs/mcp',
 ]);
 
 /** True when pathname would match the published Transform Rule expression. */
@@ -79,7 +81,7 @@ function endpointPolicyPathsFromSource() {
 
 function main() {
   const paths = endpointPolicyPathsFromSource();
-  const uncovered = paths.filter((path) => !pathCoveredByExpression(path));
+  const uncovered = [...paths, ...EDGE_PROOF_PATH_PREFIXES].filter((path) => !pathCoveredByExpression(path));
   if (uncovered.length > 0) {
     console.error('Edge-proof Transform Rule expression does not cover:');
     for (const path of uncovered) console.error(`  ${path}`);

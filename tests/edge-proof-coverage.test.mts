@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 
+const originalFetch = globalThis.fetch;
+
 import {
   hasUnprovenCloudflareClientIp as serverUnproven,
   hasCloudflareTransitProof as serverProof,
@@ -15,6 +17,8 @@ import {
 } from '../api/_client-ip.js';
 import {
   checkEndpointRateLimit,
+  checkRateLimit,
+  checkFailClosedScopedIpRateLimit,
   ENDPOINT_RATE_POLICIES,
   resetEdgeProofRateLimitReportedForTest as resetServerEdgeProofReport,
 } from '../server/_shared/rate-limit.ts';
@@ -28,6 +32,7 @@ import {
 } from '../scripts/cloudflare-edge-proof-rule.mjs';
 
 afterEach(() => {
+  globalThis.fetch = originalFetch;
   delete process.env.CF_EDGE_PROOF_SECRET;
   delete process.env.UPSTASH_REDIS_REST_URL;
   delete process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -85,6 +90,66 @@ describe('unproven Cloudflare client IP (#8402)', () => {
 });
 
 describe('IP-scoped endpoint rate limits reject unproven CF client IP (#8402)', () => {
+  it('rejects unproven CF headers in global and pre-auth scoped budgets before Redis', async () => {
+    process.env.CF_EDGE_PROOF_SECRET = 'edge-secret-xyz';
+    const request = requestWith({ 'cf-connecting-ip': '203.0.113.7' });
+    for (const response of [
+      await checkRateLimit(request, {}, { failClosed: false }),
+      await checkFailClosedScopedIpRateLimit(request, 'proof-test', 10, '60 s', {}),
+    ]) {
+      assert.equal(response?.status, 403);
+      assert.equal(response?.headers.get('X-RateLimit-Mode'), 'edge-proof');
+    }
+    assert.equal(await checkRateLimit(request, {}, { principalUserId: 'user_test', failClosed: false }), null);
+  });
+
+  for (const [path, module] of [
+    ['/api/skills/fetch-agentskills', '../api/skills/fetch-agentskills.ts'],
+    ['/ask', '../api/ask.ts'],
+    ['/a2a', '../api/a2a.ts'],
+    ['/docs/mcp', '../api/docs-mcp.ts'],
+  ]) {
+    it(`rejects unproven CF headers through the real ${path} handler`, async () => {
+      process.env.CF_EDGE_PROOF_SECRET = 'edge-secret-xyz';
+      let fetches = 0;
+      globalThis.fetch = async () => {
+        fetches += 1;
+        throw new Error('This rejection must not call Redis or an upstream');
+      };
+      const { default: handler } = await import(module);
+      const response = await handler(new Request(`https://worldmonitor.app${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'cf-connecting-ip': '203.0.113.7' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/list' }),
+      }));
+      assert.equal(response.status, 403);
+      assert.equal(fetches, 0);
+      assert.equal(response.headers.get('X-RateLimit-Mode'), 'edge-proof');
+      const body = await response.json();
+      if (path === '/a2a' || path === '/docs/mcp') {
+        assert.equal(body.jsonrpc, '2.0');
+        assert.equal(body.id, 7);
+        assert.equal(body.error.code, -32003);
+      }
+      if (path === '/ask') assert.equal(body._meta.response_type, 'error');
+    });
+  }
+
+  it('keeps standalone direct-origin and proven Cloudflare requests usable', async () => {
+    process.env.CF_EDGE_PROOF_SECRET = 'edge-secret-xyz';
+    const { default: handler } = await import('../api/skills/fetch-agentskills.ts');
+    for (const proofHeaders of [
+      {},
+      { 'cf-connecting-ip': '203.0.113.7', 'x-wm-edge-proof': 'edge-secret-xyz' },
+    ]) {
+      const response = await handler(new Request('https://worldmonitor.app/api/skills/fetch-agentskills', {
+        method: 'POST', headers: proofHeaders, body: '{}',
+      }));
+      assert.equal(response.status, 400);
+      assert.equal((await response.json()).error, 'Provide url or id');
+    }
+  });
+
   it('returns 403 instead of trusting a forged cf-connecting-ip', async () => {
     process.env.CF_EDGE_PROOF_SECRET = 'edge-secret-xyz';
     // Intentionally omit Upstash env: the edge-proof gate must fire before the
@@ -142,8 +207,8 @@ describe('Cloudflare edge-proof Transform Rule coverage (#8402)', () => {
       EDGE_PROOF_TRANSFORM_EXPRESSION,
       `(http.request.uri.path matches "${EDGE_PROOF_PATH_MATCHER_SOURCE}")`,
     );
-    assert.deepEqual([...EDGE_PROOF_PATH_ALTERNATIVES], ['api', 'mcp', 'ask', 'oauth', 'a2a']);
-    assert.deepEqual(EDGE_PROOF_PATH_PREFIXES, ['/api/', '/mcp', '/ask', '/oauth/', '/a2a']);
+    assert.deepEqual([...EDGE_PROOF_PATH_ALTERNATIVES], ['api', 'mcp', 'ask', 'oauth', 'a2a', 'docs/mcp']);
+    assert.deepEqual(EDGE_PROOF_PATH_PREFIXES, ['/api/', '/mcp', '/ask', '/oauth/', '/a2a', '/docs/mcp']);
   });
 
   it('covers every ENDPOINT_RATE_POLICIES path with the published expression', () => {
@@ -154,7 +219,7 @@ describe('Cloudflare edge-proof Transform Rule coverage (#8402)', () => {
     assert.equal(embedded, EDGE_PROOF_PATH_MATCHER_SOURCE);
     const fromExpression = new RegExp(embedded!);
     assert.equal(fromExpression.source, EDGE_PROOF_PATH_MATCHER.source);
-    for (const pathname of Object.keys(ENDPOINT_RATE_POLICIES)) {
+    for (const pathname of [...Object.keys(ENDPOINT_RATE_POLICIES), ...EDGE_PROOF_PATH_PREFIXES]) {
       const matched = fromExpression.test(pathname);
       assert.ok(
         matched,
