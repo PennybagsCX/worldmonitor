@@ -114,8 +114,9 @@ describe('IP-scoped endpoint rate limits reject unproven CF client IP (#8402)', 
   it('does not reject when a principal-scoped budget is in use', async () => {
     process.env.CF_EDGE_PROOF_SECRET = 'edge-secret-xyz';
     // Leave Upstash unset: principal-scoped budgets skip the edge-proof gate
-    // and then hit the deterministic missing-config degraded path. Avoid
-    // pointing at a fake host that would attempt an outbound Redis call.
+    // and then hit the deterministic missing-config degraded path (503), which
+    // also proves the forged CF header did not take the edge-proof 403 branch.
+    // Avoid pointing at a fake host that would attempt an outbound Redis call.
     delete process.env.UPSTASH_REDIS_REST_URL;
     delete process.env.UPSTASH_REDIS_REST_TOKEN;
 
