@@ -2608,12 +2608,15 @@ async function writeStoryTracking(
         // evidence archive member is self-contained (title/link/description
         // ride on the member; no story:track dependency) and only the
         // full/English scope that judging actually reads is archived.
+        // #8398: the evidence link rides the same persist-time gate as
+        // story:track — the member is a second stored copy of the link, so
+        // it must not carry a hostile URL the track row blanks.
         if (evidenceEligible) {
           const evidenceMember = buildForecastEvidenceMember(
             {
               hash,
               title: representative.title,
-              link: representative.link,
+              link: storyTrackLinkForPersist(representative),
               description: representative.description,
               publishedAt: representative.publishedAt,
             },
