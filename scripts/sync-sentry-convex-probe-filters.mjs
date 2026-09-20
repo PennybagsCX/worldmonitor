@@ -34,6 +34,12 @@
  *   - Relay matches each glob case-insensitively against `"<type>: <value>"`.
  *   - These events arrive with sdk.name = "convex", so browser ignoreErrors /
  *     beforeSend never see them.
+ *   - Relay can take >1 min to pick up a PUT. A probe sent immediately after
+ *     apply may still be accepted; wait, then confirm with event-id lookup
+ *     (filtered → HTTP 404) rather than assuming the first sample.
+ *   - `stats_v2` `filtered/error-message` is only visible when the request
+ *     scopes `project=<numeric id>`; org-wide queries can omit that reason.
+ *     Poll — the series lags ingestion by >1 min.
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
