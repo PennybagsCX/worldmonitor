@@ -19,3 +19,17 @@ test('valid distant or old observations remain nonmatches',()=>{
   assert.equal(isDuplicatedByAcled(candidate,[{...acled,latitude:5}]),false);
   assert.equal(isDuplicatedByAcled(candidate,[{...acled,event_date:'2026-08-01'}]),false);
 });
+
+for (const field of ['latitude', 'longitude', 'fatalities']) {
+  for (const value of [null, false, true, [], [0], {}]) {
+    test(`rejects runtime ${field} value ${JSON.stringify(value)} without suppressing UCDP totals`, () => {
+      const malformed = JSON.parse(JSON.stringify({ ...acled, [field]: value }));
+      assert.equal(isDuplicatedByAcled(candidate, [malformed]), false);
+      const totals = { UCDP_VIOLENCE_TYPE_STATE_BASED: { count: 1, totalDeaths: 0 } };
+      assert.deepEqual(deduplicateUcdpProjectionAggregates(
+        totals, [[0, candidate.dateMs, 0, 0, 0]], [malformed],
+      ), totals);
+      assert.equal(isDuplicatedByAcled(candidate, [malformed, acled]), true);
+    });
+  }
+}

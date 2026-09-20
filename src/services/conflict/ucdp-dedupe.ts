@@ -36,7 +36,8 @@ function validCoordinates(latitude: number, longitude: number): boolean {
     && Number.isFinite(longitude) && Math.abs(longitude) <= 180;
 }
 
-function numericValue(value: string | number): number {
+function numericValue(value: unknown): number {
+  if (typeof value !== 'string' && typeof value !== 'number') return NaN;
   return typeof value === 'string' && !value.trim() ? NaN : Number(value);
 }
 
