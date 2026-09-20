@@ -78,21 +78,57 @@ cp docker/redis-rest-proxy.mjs "$STAGE/redis-rest/"
 # ── Seeders + AIS relay (self-hosted fork additions) ────────────────────────
 # Upstream populates the Redis-cached layers with a host-side cron of these
 # scripts (SELF_HOSTING.md); a self-hosted pup has no host cron, so ship them
-# inside the app tree with their runtime deps. scripts/package.json covers
-# both the seeders and the AIS relay (gated on AISSTREAM_API_KEY in the pup).
-mkdir -p "$STAGE/scripts"
-cp scripts/run-seeders.sh scripts/check-seed-freshness.mjs \
-   scripts/ais-relay.cjs scripts/notification-relay.cjs \
-   scripts/package.json scripts/package-lock.json "$STAGE/scripts/"
-cp scripts/seed-*.mjs scripts/_seed-*.mjs scripts/_bundle-runner.mjs "$STAGE/scripts/" 2>/dev/null || true
-# scripts-root CommonJS helpers — some are createRequire'd dynamically, so a
-# static import scan can't be trusted to enumerate them (bit us once: _proxy-utils.cjs)
-cp scripts/*.cjs "$STAGE/scripts/" 2>/dev/null || true
-[ -d scripts/lib ] && cp -R scripts/lib "$STAGE/scripts/lib"
-# seeders require shared JSON/data relative to the repo root
-cp -R shared "$STAGE/shared"
+# inside the app tree with their runtime deps. Ship scripts/ + shared/ WHOLE
+# and nest them under app/ so every relative import resolves exactly as it
+# does from the upstream repo root: scripts' ../api and ../shared land inside
+# app/, and scripts/lib's ../../server lands at the stage root (server/).
+mkdir -p "$STAGE/app"
+cp -R scripts "$STAGE/app/scripts"
+rm -rf "$STAGE/app/scripts/node_modules"
+cp -R shared "$STAGE/app/shared"
+# scripts/lib reaches ../../server/_shared (committed plain-JS helpers)
+[ -d server/_shared ] && mkdir -p "$STAGE/app/server" && cp -R server/_shared "$STAGE/app/server/_shared"
 echo "== installing scripts runtime deps =="
-( cd "$STAGE/scripts" && npm ci --omit=dev --omit=optional --ignore-scripts >/dev/null 2>&1 )
+( cd "$STAGE/app/scripts" && npm ci --omit=dev --omit=optional --ignore-scripts >/dev/null 2>&1 )
+
+# ── Gate: every relative import in shipped scripts/lib must resolve in the
+#    staged tree — a miss here is a runtime crash inside the pup container.
+node --input-type=commonjs -e '
+const fs = require("fs"), path = require("path");
+const root = path.resolve(process.argv[1]);
+let bad = 0;
+// Only the pup runtime surface: seeders, their helpers, the relay, and the
+// lib/shared dirs they pull in. Dev/acceptance tooling (audit-, capture-,
+// compare-, dry-run-, check-*.mjs) is shipped but not imported at runtime.
+const RUNTIME_FILE = /^(seed-|_|ais-relay\.|notification-relay\.)/;
+function check(dir, all) {
+  for (const f of fs.readdirSync(dir)) {
+    const p = path.join(dir, f);
+    if (fs.statSync(p).isDirectory()) { if (f !== "node_modules") check(p, true); continue; }
+    if (!/\.(mjs|cjs)$/.test(f)) continue;
+    if (!all && !RUNTIME_FILE.test(f)) continue;
+    const src = fs.readFileSync(p, "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")   // strip block comments (doc examples mention imports)
+      .replace(/^\s*\/\/.*$/gm, "");
+    const specs = [];
+    for (const m of src.matchAll(/(?:from|require)\(\s*["\x27](\.[^"\x27]+)["\x27]\s*\)/g)) specs.push(m[1]);
+    for (const m of src.matchAll(/from\s+["\x27](\.[^"\x27]+)["\x27]/g)) specs.push(m[1]);
+    for (const s of specs) {
+      const r = path.resolve(path.dirname(p), s);
+      if (!fs.existsSync(r) && !fs.existsSync(r + ".cjs") && !fs.existsSync(r + ".mjs") && !fs.existsSync(r + ".json")) {
+        console.log("UNRESOLVED:", path.relative(root, p), "->", s);
+        bad++;
+      }
+    }
+  }
+}
+check(path.join(root, "app/scripts"), false);
+check(path.join(root, "app/shared"), true);
+// server/_shared is scanned from the ../../server/_shared references in app/scripts/lib
+if (fs.existsSync(path.join(root, "app/server"))) check(path.join(root, "app/server"), true);
+if (bad) { console.error(bad + " unresolved import(s)"); process.exit(1); }
+console.log("all relative imports resolve OK");
+' "$STAGE" || exit 1
 
 # ── Gate: the raw handlers must resolve their runtime imports, or the API
 #    502s "missing dependency" at runtime (upstream-documented failure mode).
