@@ -85,6 +85,9 @@ cp scripts/run-seeders.sh scripts/check-seed-freshness.mjs \
    scripts/ais-relay.cjs scripts/notification-relay.cjs \
    scripts/package.json scripts/package-lock.json "$STAGE/scripts/"
 cp scripts/seed-*.mjs scripts/_seed-*.mjs scripts/_bundle-runner.mjs "$STAGE/scripts/" 2>/dev/null || true
+# scripts-root CommonJS helpers — some are createRequire'd dynamically, so a
+# static import scan can't be trusted to enumerate them (bit us once: _proxy-utils.cjs)
+cp scripts/*.cjs "$STAGE/scripts/" 2>/dev/null || true
 [ -d scripts/lib ] && cp -R scripts/lib "$STAGE/scripts/lib"
 # seeders require shared JSON/data relative to the repo root
 cp -R shared "$STAGE/shared"

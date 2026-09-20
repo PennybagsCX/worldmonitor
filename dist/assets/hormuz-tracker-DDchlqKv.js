@@ -1,0 +1,1 @@
+import{k as a}from"./panel-storage-COYkA8bZ.js";async function o(){try{const t=await fetch(a("/api/supply-chain/hormuz-tracker"),{signal:AbortSignal.timeout(15e3)});if(!t.ok)return null;const r=await t.json();return r.attribution?r:null}catch{return null}}export{o as f};
