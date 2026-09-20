@@ -77,6 +77,11 @@ import {
   parseForecastEvidenceCoverage,
 } from '../../../../scripts/_forecast-evidence-archive.mjs';
 import { assignStoryIdentity, adoptExistingCanonical } from './dedup.mjs';
+import {
+  feedPublisherHost,
+  isPublisherLink,
+  linkHostname,
+} from '../../../../shared/publisher-link-gate.js';
 // @ts-expect-error — JS module, no declaration file
 import { STORY_ALIAS_PUBLISH_SCRIPT } from '../../../../shared/story-alias-publish-script.mjs';
 import { classifyOpinion } from '../../../_shared/opinion-classifier.js';
@@ -108,6 +113,7 @@ import diplomacyKeywordsData from '../../../../shared/diplomacy-keywords.json';
 import {
   MIN_CORROBORATING_PUBLISHERS,
   PUBLISHER_FAMILIES,
+  PUBLISHER_FAMILY_DOMAIN_TABLE,
   publisherFamilyFor,
   publisherFamilyForItem,
 } from '../../../../shared/publisher-families.js';
@@ -1044,6 +1050,13 @@ function parseRssXml(xml: string, feed: ServerFeed, variant: string): ParseResul
     // Strip non-HTTP links (javascript:, data:, etc.) before any downstream use.
     if (!/^https?:\/\//i.test(link)) link = '';
 
+    // #8398: ingest-side publisher-link gate — an item whose link leaves its
+    // own publisher's domain is the suspicious case. The expected set is
+    // composed below (after the origin publisher is known); the check itself
+    // runs per branch so a rejected link never reaches the item builders.
+    // `link` is NOT cleared here: clearing would conflate "rejected" with
+    // "absent" for the counters below. Each branch drops-or-blanks.
+
     // Strict date gate (R2): walk the dialect-specific tag priority list and
     // require at least one non-empty, parseable, non-future timestamp. Items
     // that fail the gate are dropped — never silently stamped with Date.now()
@@ -1078,11 +1091,33 @@ function parseRssXml(xml: string, feed: ServerFeed, variant: string): ParseResul
     // identity bound.
     const originPublisher = originPublisherTrusted ? extractedOriginPublisher : '';
     if (!forDigest) {
+
+      // #8398: country-pool branch. parseRssXml is feed-scoped (it knows
+      // `feed`), so the ingest gate runs here — the per-category assembly
+      // below is item-scoped and no longer knows which feed an item came
+      // from (it only carries `source`, the feed label). A rejected link
+      // drops the item: the row never reaches the pool (the pool has its own
+      // link-length cap below, which a hostile link would otherwise satisfy).
+      if (
+        link &&
+        !isItemLinkAllowed(
+          link,
+          { source: feed.name, originPublisher, originPublisherTrusted },
+          feed,
+        )
+      ) {
+        console.warn(
+          `[digest] publisher-link-gate drop feed="${feed.name}" variant=${variant} ` +
+            `host="${linkHostnameForLog(link)}"`,
+        );
+        continue;
+      }
       if (title.length <= 1000 && link.length <= 2048 && originPublisher.length <= 200) {
         countryItems.push({
           source: feed.name, title, link, publishedAt,
           originPublisher, originPublisherTrusted,
         });
+        continue;
       }
       continue;
     }
@@ -1090,6 +1125,27 @@ function parseRssXml(xml: string, feed: ServerFeed, variant: string): ParseResul
     const threat = classifyByKeyword(title, variant);
     const isAlert = threat.level === 'critical' || threat.level === 'high';
     const description = extractDescription(block, isAtom, title);
+
+    // #8398: digest branch — same ingest gate as the country-pool branch
+    // above (this is the last feed-scoped point before items lose their feed;
+    // see the comment there for why the gate cannot run later). The link is
+    // blanked rather than the item dropped: the title still carries
+    // corroboration/brief signal while no hostile link can be persisted to
+    // story:track or fanned out by the relay.
+    if (
+      link &&
+      !isItemLinkAllowed(
+        link,
+        { source: feed.name, originPublisher: extractedOriginPublisher, originPublisherTrusted },
+        feed,
+      )
+    ) {
+      console.warn(
+        `[digest] publisher-link-gate blank feed="${feed.name}" variant=${variant} ` +
+          `host="${linkHostnameForLog(link)}"`,
+      );
+      link = '';
+    }
 
     items.push({
       source: feed.name,
@@ -2232,6 +2288,7 @@ function shouldPruneAccumulator(options: {
       options.nowMs,
     );
 }
+
 /**
  * Build the HSET field list for a story:track:v1 row.
  *
@@ -2246,7 +2303,105 @@ function shouldPruneAccumulator(options: {
  * empty is the authoritative signal that the current mention has no body;
  * consumers then fall back to the cleaned headline (R6) honestly, and the
  * next mention with a body re-populates the field naturally.
+ *
+ * #8398: log-safe host of a rejected link. Never logs the full URL — a
+ * hostile link may carry a phishing path/query worth no free print.
  */
+function linkHostnameForLog(link: string): string {
+  return linkHostname(link) || 'unparseable';
+}
+
+/**
+ * #8398: expected publisher hosts for a parsed feed item's link.
+ *
+ * A story link must resolve to the publisher the item claims. The expected
+ * set is unioned from three server-known signals so one missing registry
+ * cannot wedge a whole publisher:
+ *   1. the configured feed URL's own host (`feedPublisherHost`) — the
+ *      publisher domain as registered for this feed;
+ *   2. the curated family table (`PUBLISHER_FAMILY_DOMAINS` behind
+ *      `publisherFamilyForDomain`-style lookup) via `PUBLISHER_FAMILIES` —
+ *      covers the edition/CDN split where the article host differs from the
+ *      feed host (e.g. `amp.` editions);
+ *   3. the trusted-aggregator origin publisher (RSS `<source>`, only when the
+ *      parser marked this feed trusted) — a wire syndicated through Google
+ *      News is still the wire's article, not the aggregator's.
+ *
+ * The RSS `<source>` element on an UNTRUSTED feed is upstream text and never
+ * enters the set (same rule as `publisherFamilyForItem`): a hostile feed
+ * cannot self-attest an arbitrary publisher domain. Returns an empty array
+ * when no server-known signal exists — `isPublisherLink` then fails closed
+ * and the item's link is dropped at ingest.
+ */
+function expectedPublisherHostsForItem(
+  item: Pick<ParsedItem, 'source' | 'originPublisher' | 'originPublisherTrusted'>,
+  feed: Pick<ServerFeed, 'url'>,
+): string[] {
+  const hosts = new Set<string>();
+  const feedHost = feedPublisherHost(feed?.url);
+  if (feedHost) hosts.add(feedHost);
+  const sourceFamily = publisherFamilyFor(item?.source ?? '');
+  const familyDomains = PUBLISHER_FAMILY_DOMAIN_TABLE[sourceFamily];
+  if (Array.isArray(familyDomains)) for (const domain of familyDomains) hosts.add(domain);
+  // Trusted-aggregator origin: map the origin NAME to its family the same
+  // way corroboration does, then add that family's domains.
+  if (item?.originPublisherTrusted === true) {
+    const originFamily = publisherFamilyFor(item?.originPublisher ?? '');
+    const originDomains = PUBLISHER_FAMILY_DOMAIN_TABLE[originFamily];
+    if (Array.isArray(originDomains)) for (const domain of originDomains) hosts.add(domain);
+  }
+  return [...hosts];
+}
+
+/**
+ * #8398: ingest-side publisher-link gate.
+ *
+ * Defense in depth behind the parse-time gate in `parseRssXml`: that gate
+ * covers items parsed from a feed, but `buildStoryTrackHsetFields` is also
+ * reachable with reconstructed items (tests, backfills, residue replays).
+ * Persisting happens here, so the check happens here too — a stored
+ * hostile link is harder to contain than a rejected one, and the relay
+ * fans stored rows out to every matching user.
+ *
+ * Fail-closed WITHOUT the feed URL: this function is item-scoped and does
+ * not know the item's feed, so it cannot compose the feed-host leg of the
+ * expected set. The defense is the persisted-`link` shape: a surviving
+ * hostile link must BOTH pass the parse-time feed-scoped gate AND survive
+ * this item-scoped re-check against the curated family domains + the
+ * trusted-aggregator origin publisher. `isPublisherLink` with an empty set
+ * returns false, so an item with no server-known publisher signal persists
+ * with a blank link.
+ */
+function storyTrackLinkForPersist(
+  item: Pick<ParsedItem, 'link' | 'source' | 'originPublisher' | 'originPublisherTrusted'>,
+): string {
+  const link = typeof item.link === 'string' ? item.link : '';
+  if (!link) return '';
+  const hosts = new Set<string>();
+  const sourceFamily = publisherFamilyFor(item?.source ?? '');
+  const familyDomains = PUBLISHER_FAMILY_DOMAIN_TABLE[sourceFamily];
+  if (Array.isArray(familyDomains)) for (const domain of familyDomains) hosts.add(domain);
+  if (item?.originPublisherTrusted === true) {
+    const originFamily = publisherFamilyFor(item?.originPublisher ?? '');
+    const originDomains = PUBLISHER_FAMILY_DOMAIN_TABLE[originFamily];
+    if (Array.isArray(originDomains)) for (const domain of originDomains) hosts.add(domain);
+  }
+  if (isPublisherLink(link, hosts)) return link;
+  console.warn(
+    `[digest] publisher-link-gate persist-blank source="${item?.source ?? ''}" ` +
+      `host="${linkHostnameForLog(link)}"`,
+  );
+  return '';
+}
+
+function isItemLinkAllowed(
+  link: string,
+  item: Pick<ParsedItem, 'source' | 'originPublisher' | 'originPublisherTrusted'>,
+  feed: Pick<ServerFeed, 'url'>,
+): boolean {
+  return isPublisherLink(link, expectedPublisherHostsForItem(item, feed));
+}
+
 function buildStoryTrackHsetFields(
   item: ParsedItem,
   nowStr: string,
@@ -2260,7 +2415,9 @@ function buildStoryTrackHsetFields(
     // eligibility stamp is present. Legacy rows without it fail closed.
     'anchorEligible', anchorEligible ? '1' : '0',
     'title', item.title,
-    'link', item.link,
+    // #8398: never persist a link that fails the publisher gate (see
+    // storyTrackLinkForPersist above — fail-closed, blank on rejection).
+    'link', storyTrackLinkForPersist(item),
     'severity', item.level,
     'lang', item.lang,
     'description', item.description ?? '',
@@ -3199,6 +3356,9 @@ export const __testing__ = {
   extractRawTagBody,
   extractFirstDateTag,
   buildStoryTrackHsetFields,
+  storyTrackLinkForPersist,
+  isItemLinkAllowed,
+  expectedPublisherHostsForItem,
   isAnchorEligible,
   isIdentityAnchorEligible,
   computeImportanceScore,

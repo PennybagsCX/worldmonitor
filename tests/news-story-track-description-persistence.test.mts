@@ -266,11 +266,50 @@ describe('buildStoryTrackHsetFields — story:track:v1 HSET contract', () => {
     assert.strictEqual(m.get('description'), '');
   });
 
+  it('persists a link that belongs to its publisher (family-domain allow, #8398)', () => {
+    // A link on the source's curated family domains must survive the
+    // persist-time publisher gate — the gate blanks hostile links, not
+    // legitimate publisher links.
+    const item = baseItem({
+      source: 'Reuters World',
+      link: 'https://www.reuters.com/world/europe/x-123',
+    });
+    const fields = buildStoryTrackHsetFields(item, '1745000000001', 99);
+    assert.strictEqual(fieldsToMap(fields).get('link'), 'https://www.reuters.com/world/europe/x-123');
+  });
+
+  it('blanks a persisted link that leaves its publisher domain (#8398)', () => {
+    // The pentest chain: attacker-controlled RSS link persisted verbatim
+    // into story:track, then fanned out by the relay to every matching
+    // user. The persist-time gate blanks it; the title still persists so
+    // corroboration/brief signal is unchanged.
+    const hostile = baseItem({
+      source: 'Reuters World',
+      title: 'Attacker headline with off-publisher link',
+      link: 'https://evil.example/phish',
+    });
+    const fields = buildStoryTrackHsetFields(hostile, '1745000000001', 99);
+    const m = fieldsToMap(fields);
+    assert.strictEqual(m.get('link'), '');
+    assert.strictEqual(m.get('title'), 'Attacker headline with off-publisher link');
+  });
+
+  it('blanks a persisted link for a source with no server-known publisher signal (#8398)', () => {
+    // Fail-closed: an item whose source names no curated family persists
+    // with a blank link when the feed-host leg is unavailable item-side.
+    const item = baseItem({
+      source: 'Some Brand New Feed',
+      link: 'https://somebrandnewfeed.example/a',
+    });
+    assert.strictEqual(fieldsToMap(buildStoryTrackHsetFields(item, '1745000000001', 99)).get('link'), '');
+  });
+
   it('preserves all other canonical fields (lastSeen, currentScore, title, link, severity, lang)', () => {
     const item = baseItem({
       description: 'A body that passes the length gate and will be persisted to Redis.',
       title: 'Headline A',
-      link: 'https://x.example/a',
+      source: 'Reuters World',
+      link: 'https://www.reuters.com/world/a',
       level: 'high',
       lang: 'fr',
     });
@@ -279,7 +318,7 @@ describe('buildStoryTrackHsetFields — story:track:v1 HSET contract', () => {
     assert.strictEqual(m.get('lastSeen'), '1745000000001');
     assert.strictEqual(m.get('currentScore'), 99);
     assert.strictEqual(m.get('title'), 'Headline A');
-    assert.strictEqual(m.get('link'), 'https://x.example/a');
+    assert.strictEqual(m.get('link'), 'https://www.reuters.com/world/a');
     assert.strictEqual(m.get('severity'), 'high');
     assert.strictEqual(m.get('lang'), 'fr');
   });
