@@ -34,11 +34,29 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CHECK_ONLY = process.argv.includes('--check');
 
+/**
+ * First path segment alternatives shared by the published Cloudflare
+ * expression and every in-repo coverage check. Edit here only.
+ */
+export const EDGE_PROOF_PATH_ALTERNATIVES = Object.freeze([
+  'api',
+  'mcp',
+  'ask',
+  'oauth',
+  'a2a',
+]);
+
+/** Regex source pasted into Cloudflare's `matches` operator (anchors included). */
+export const EDGE_PROOF_PATH_MATCHER_SOURCE = `^/(${EDGE_PROOF_PATH_ALTERNATIVES.join('|')})(/|$)`;
+
+/** Same matcher Cloudflare evaluates against `http.request.uri.path`. */
+export const EDGE_PROOF_PATH_MATCHER = new RegExp(EDGE_PROOF_PATH_MATCHER_SOURCE);
+
 /** Filter expression operators must paste into the Cloudflare Transform Rule. */
 export const EDGE_PROOF_TRANSFORM_EXPRESSION =
-  '(http.request.uri.path matches "^/(api|mcp|ask|oauth|a2a)(/|$)")';
+  `(http.request.uri.path matches "${EDGE_PROOF_PATH_MATCHER_SOURCE}")`;
 
-/** Path prefixes the Transform Rule must cover. */
+/** Human-readable path prefixes the Transform Rule must cover. */
 export const EDGE_PROOF_PATH_PREFIXES = Object.freeze([
   '/api/',
   '/mcp',
@@ -47,8 +65,9 @@ export const EDGE_PROOF_PATH_PREFIXES = Object.freeze([
   '/a2a',
 ]);
 
-function pathCoveredByExpression(pathname) {
-  return /^\/(api|mcp|ask|oauth|a2a)(\/|$)/.test(pathname);
+/** True when pathname would match the published Transform Rule expression. */
+export function pathCoveredByExpression(pathname) {
+  return EDGE_PROOF_PATH_MATCHER.test(pathname);
 }
 
 function endpointPolicyPathsFromSource() {

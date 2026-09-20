@@ -21,6 +21,10 @@ import {
 import {
   EDGE_PROOF_TRANSFORM_EXPRESSION,
   EDGE_PROOF_PATH_PREFIXES,
+  EDGE_PROOF_PATH_ALTERNATIVES,
+  EDGE_PROOF_PATH_MATCHER,
+  EDGE_PROOF_PATH_MATCHER_SOURCE,
+  pathCoveredByExpression,
 } from '../scripts/cloudflare-edge-proof-rule.mjs';
 
 afterEach(() => {
@@ -109,14 +113,12 @@ describe('IP-scoped endpoint rate limits reject unproven CF client IP (#8402)', 
 
   it('does not reject when a principal-scoped budget is in use', async () => {
     process.env.CF_EDGE_PROOF_SECRET = 'edge-secret-xyz';
-    process.env.UPSTASH_REDIS_REST_URL = 'https://example.upstash.io';
-    process.env.UPSTASH_REDIS_REST_TOKEN = 'token';
+    // Leave Upstash unset: principal-scoped budgets skip the edge-proof gate
+    // and then hit the deterministic missing-config degraded path. Avoid
+    // pointing at a fake host that would attempt an outbound Redis call.
+    delete process.env.UPSTASH_REDIS_REST_URL;
+    delete process.env.UPSTASH_REDIS_REST_TOKEN;
 
-    // Without Redis actually answering, principal path still hits missing-config
-    // only when Redis client construction fails — here URL/token are set so the
-    // limiter constructs; the unproven CF header must not short-circuit to 403
-    // when principalUserId is supplied. We only assert the edge-proof branch is
-    // skipped by checking status is not 403 with X-RateLimit-Mode edge-proof.
     const response = await checkEndpointRateLimit(
       requestWith({
         'cf-connecting-ip': '203.0.113.7',
@@ -127,25 +129,37 @@ describe('IP-scoped endpoint rate limits reject unproven CF client IP (#8402)', 
       { principalUserId: 'user_test_principal' },
     );
 
-    if (response) {
-      assert.notEqual(response.headers.get('X-RateLimit-Mode'), 'edge-proof');
-    }
+    assert.ok(response, 'missing Redis must degrade rather than admit');
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get('X-RateLimit-Mode'), 'degraded');
   });
 });
 
 describe('Cloudflare edge-proof Transform Rule coverage (#8402)', () => {
   it('documents path prefixes that must receive x-wm-edge-proof', () => {
-    assert.match(EDGE_PROOF_TRANSFORM_EXPRESSION, /api\|mcp\|ask\|oauth\|a2a/);
+    assert.equal(
+      EDGE_PROOF_TRANSFORM_EXPRESSION,
+      `(http.request.uri.path matches "${EDGE_PROOF_PATH_MATCHER_SOURCE}")`,
+    );
+    assert.deepEqual([...EDGE_PROOF_PATH_ALTERNATIVES], ['api', 'mcp', 'ask', 'oauth', 'a2a']);
     assert.deepEqual(EDGE_PROOF_PATH_PREFIXES, ['/api/', '/mcp', '/ask', '/oauth/', '/a2a']);
   });
 
   it('covers every ENDPOINT_RATE_POLICIES path with the published expression', () => {
-    const covered = (pathname) => /^\/(api|mcp|ask|oauth|a2a)(\/|$)/.test(pathname);
+    // Re-parse the matcher from the published expression so a drifted
+    // EDGE_PROOF_TRANSFORM_EXPRESSION cannot pass while pathCoveredByExpression
+    // still uses the old source.
+    const embedded = EDGE_PROOF_TRANSFORM_EXPRESSION.match(/matches "([^"]+)"/)?.[1];
+    assert.equal(embedded, EDGE_PROOF_PATH_MATCHER_SOURCE);
+    const fromExpression = new RegExp(embedded!);
+    assert.equal(fromExpression.source, EDGE_PROOF_PATH_MATCHER.source);
     for (const pathname of Object.keys(ENDPOINT_RATE_POLICIES)) {
+      const matched = fromExpression.test(pathname);
       assert.ok(
-        covered(pathname),
+        matched,
         `${pathname} must match the Transform Rule expression ${EDGE_PROOF_TRANSFORM_EXPRESSION}`,
       );
+      assert.equal(pathCoveredByExpression(pathname), matched);
     }
   });
 });
