@@ -3,14 +3,13 @@
  * All external IOC feed calls happen in seed-cyber.mjs on Railway.
  */
 
-import {
-  ApiError,
-  type ServerContext,
-  type ListCyberThreatsRequest,
-  type ListCyberThreatsResponse,
+import type {
+  ServerContext,
+  ListCyberThreatsRequest,
+  ListCyberThreatsResponse,
 } from '../../../../src/generated/server/worldmonitor/cyber/v1/service_server';
 
-import { logCacheReadError, readCachedJson } from '../../../_shared/redis';
+import { readRequiredSeed } from '../../../_shared/required-seed';
 import {
   DEFAULT_LIMIT,
   MAX_LIMIT,
@@ -51,15 +50,13 @@ export async function listCyberThreats(
 ): Promise<ListCyberThreatsResponse> {
   const empty: ListCyberThreatsResponse = { threats: [], pagination: { nextCursor: '', totalCount: 0 } };
 
-  const cached = await readCachedJson(SEED_CACHE_KEY, true);
-  if (cached.status === 'error') logCacheReadError(SEED_CACHE_KEY, cached.error);
-  const seedData = cached.status === 'hit' ? cached.value as Pick<ListCyberThreatsResponse, 'threats'> | null : null;
-  if (!seedData || !Array.isArray(seedData.threats)) {
-    throw new ApiError(503, 'Cyber threats cache unavailable', '');
-  }
-
-  const pageSize = clampInt(req.pageSize, DEFAULT_LIMIT, 1, MAX_LIMIT);
+  const pageSize = req.pageSize <= 0 ? DEFAULT_LIMIT : clampInt(req.pageSize, DEFAULT_LIMIT, 1, MAX_LIMIT);
   const offset = parseCursor(req.cursor);
+
+  const seedData = await readRequiredSeed(SEED_CACHE_KEY, value => {
+    const data = value as Pick<ListCyberThreatsResponse, 'threats'> | null;
+    return data && Array.isArray(data.threats) ? data : undefined;
+  });
 
   const allThreats = filterSeededThreats(seedData.threats, req);
   if (offset >= allThreats.length) return empty;
