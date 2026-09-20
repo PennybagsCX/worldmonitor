@@ -83,8 +83,10 @@ describe('unproven Cloudflare client IP (#8402)', () => {
 describe('IP-scoped endpoint rate limits reject unproven CF client IP (#8402)', () => {
   it('returns 403 instead of trusting a forged cf-connecting-ip', async () => {
     process.env.CF_EDGE_PROOF_SECRET = 'edge-secret-xyz';
-    process.env.UPSTASH_REDIS_REST_URL = 'https://example.upstash.io';
-    process.env.UPSTASH_REDIS_REST_TOKEN = 'token';
+    // Intentionally omit Upstash env: the edge-proof gate must fire before the
+    // Redis availability check so fail-open Redis outages cannot re-admit spoofs.
+    delete process.env.UPSTASH_REDIS_REST_URL;
+    delete process.env.UPSTASH_REDIS_REST_TOKEN;
 
     const pathname = '/api/skills/fetch-agentskills';
     assert.ok(pathname in ENDPOINT_RATE_POLICIES, 'fixture path must carry an endpoint policy');
@@ -96,6 +98,7 @@ describe('IP-scoped endpoint rate limits reject unproven CF client IP (#8402)', 
       }),
       pathname,
       {},
+      { failClosed: false },
     );
 
     assert.ok(response, 'must reject rather than admit');

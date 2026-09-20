@@ -189,19 +189,12 @@ function edgeProofRequiredResponse(corsHeaders) {
  */
 export async function checkRateLimit(request, corsHeaders, opts = {}) {
   const policy = getRateLimitPolicy(opts);
-  const rl = getRatelimit(policy);
-  if (!rl) {
-    if (opts.failClosed) {
-      logRateLimitDegraded('checkRateLimit:missing-config', new Error('Upstash Redis is not configured'), opts.ctx);
-      return rateLimitDegradedResponse(corsHeaders);
-    }
-    return null;
-  }
 
   // Default identifier is the caller IP. A cf-connecting-ip without proof is
   // either a direct-origin spoof or a Transform Rule miss — reject rather than
   // share a Cloudflare PoP bucket (#8402). Explicit non-IP identifiers skip.
-  // Report deploy drift once per isolate; per-request logging amplifies under spoof.
+  // Run before the Redis availability gate so fail-open Redis outages cannot
+  // re-admit unproven CF client IPs.
   if (opts.identifier == null && hasUnprovenCloudflareClientIp(request)) {
     reportEdgeProofRequiredOnce(
       'checkRateLimit:edge-proof',
@@ -209,6 +202,15 @@ export async function checkRateLimit(request, corsHeaders, opts = {}) {
       opts.ctx,
     );
     return edgeProofRequiredResponse(corsHeaders);
+  }
+
+  const rl = getRatelimit(policy);
+  if (!rl) {
+    if (opts.failClosed) {
+      logRateLimitDegraded('checkRateLimit:missing-config', new Error('Upstash Redis is not configured'), opts.ctx);
+      return rateLimitDegradedResponse(corsHeaders);
+    }
+    return null;
   }
 
   const identifier = opts.identifier ?? getClientIp(request);

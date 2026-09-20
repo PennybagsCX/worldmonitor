@@ -866,6 +866,21 @@ export async function checkEndpointRateLimit(request: Request, pathname: string,
     return null;
   }
 
+  // IP-scoped endpoint budgets depend on a real client IP. A cf-connecting-ip
+  // without x-wm-edge-proof is either a direct-origin spoof or a Transform Rule
+  // miss — reject rather than share a Cloudflare PoP bucket (#8402). Principal-
+  // scoped budgets do not need the edge proof. Report the deploy drift once per
+  // isolate; logging every rejection would amplify under spoofed headers.
+  // Run before the Redis availability gate so a missing Upstash config cannot
+  // re-admit unproven CF client IPs under fail-open callers.
+  if (!opts.principalUserId && hasUnprovenCloudflareClientIp(request)) {
+    reportEdgeProofRequiredOnce(
+      `checkEndpointRateLimit:${pathname}:edge-proof`,
+      new Error('Cloudflare client IP arrived without a valid x-wm-edge-proof'),
+    );
+    return edgeProofRequiredResponse(corsHeaders);
+  }
+
   const rl = getEndpointRatelimit(pathname);
   if (!rl) {
     const failClosed = opts.failClosed ?? true;
@@ -874,19 +889,6 @@ export async function checkEndpointRateLimit(request: Request, pathname: string,
       return rateLimitDegradedResponse(corsHeaders);
     }
     return null;
-  }
-
-  // IP-scoped endpoint budgets depend on a real client IP. A cf-connecting-ip
-  // without x-wm-edge-proof is either a direct-origin spoof or a Transform Rule
-  // miss — reject rather than share a Cloudflare PoP bucket (#8402). Principal-
-  // scoped budgets do not need the edge proof. Report the deploy drift once per
-  // isolate; logging every rejection would amplify under spoofed headers.
-  if (!opts.principalUserId && hasUnprovenCloudflareClientIp(request)) {
-    reportEdgeProofRequiredOnce(
-      `checkEndpointRateLimit:${pathname}:edge-proof`,
-      new Error('Cloudflare client IP arrived without a valid x-wm-edge-proof'),
-    );
-    return edgeProofRequiredResponse(corsHeaders);
   }
 
   const identifier =
